@@ -474,8 +474,9 @@ pub async fn run(config: Arc<Config>) -> anyhow::Result<()> {
     let router = build_router(&server);
 
     tracing::info!("MCP server starting on stdio");
-    serve_server(router, (tokio::io::stdin(), tokio::io::stdout())).await?;
-    tracing::info!("MCP server stopped");
+    let running = serve_server(router, (tokio::io::stdin(), tokio::io::stdout())).await?;
+    let quit_reason = running.waiting().await?;
+    tracing::info!(?quit_reason, "MCP server stopped");
     Ok(())
 }
 

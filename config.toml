@@ -1,0 +1,142 @@
+# metasearchd reference configuration
+# ===================================
+# This file documents every configuration option with its default value.
+# Copy this file to ~/.config/metasearchd/config.toml and customize.
+# Environment variables with the METASEARCHD_ prefix override these values:
+#   METASEARCHD_CACHE__DEFAULT_TTL_SECS=7200 -> cache.default_ttl_secs = 7200
+
+# --- Daemon settings ----------------------------------------------------
+[daemon]
+name = "metasearchd"
+socket_dir = "/tmp"
+pid_dir = "/tmp"
+shutdown_grace_period_secs = 30
+log_level = "info"              # trace, debug, info, warn, error
+log_file = ""                   # empty = stdout
+
+# --- Cache settings -----------------------------------------------------
+[cache]
+db_path = "~/.cache/metasearchd/cache.db"
+default_ttl_secs = 3600
+eviction_interval_secs = 300
+
+# --- Search defaults ----------------------------------------------------
+[search]
+default_limit = 10
+max_limit = 100
+request_timeout_secs = 60
+
+# --- Dispatch mode ------------------------------------------------------
+[dispatch]
+mode = "concurrent"             # "concurrent" or "tiered"
+
+# --- Anti-blocking settings ---------------------------------------------
+[anti_blocking]
+user_agents = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:132.0) Gecko/20100101 Firefox/132.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:132.0) Gecko/20100101 Firefox/132.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 OPR/116.0.0.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) Gecko/20100101 Firefox/128.0",
+    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0",
+]
+page_delay_min_ms = 500
+page_delay_max_ms = 2000
+retry_base_delay_secs = 1
+retry_max_attempts = 3
+retry_cap_secs = 60
+
+# --- Ranking weights ----------------------------------------------------
+[ranking.provider_reputation]
+enabled = false
+weight = 1.0
+
+[ranking.result_position]
+enabled = true
+weight = 1.0
+
+[ranking.freshness_bonus]
+enabled = false
+weight = 0.0
+window_days = 7
+
+
+# --- Provider entries ---------------------------------------------------
+# Each [[providers]] table configures one search provider.
+# Required fields: name, enabled
+# Optional: api_key, api_key_env, base_url, timeout_secs, weight,
+#           cache_ttl_secs, tls_shuffle_ciphers, ip_rotation_strategy,
+#           ipv6_subnet, proxies, rate_limit_rpm, retry_max_attempts, tags
+
+[[providers]]
+name = "duckduckgo"
+enabled = true
+tls_shuffle_ciphers = true
+ip_rotation_strategy = "static"
+rate_limit_rpm = 30
+retry_max_attempts = 2
+tags = ["web", "privacy"]
+
+[[providers]]
+name = "jina"
+enabled = true
+api_key_env = "JINA_API_KEY"
+base_url = "https://s.jina.ai"
+timeout_secs = 15
+ip_rotation_strategy = "ipv6_pool"
+ipv6_subnet = "2001:db8::/64"
+rate_limit_rpm = 100
+tags = ["web"]
+
+[[providers]]
+name = "brave"
+enabled = true
+api_key_env = "BRAVE_API_KEY"
+rate_limit_rpm = 20
+retry_max_attempts = 3
+tags = ["web"]
+weight = 1.2
+
+# --- Tier ladder (for tiered dispatch mode) -----------------------------
+[tiers]
+order = [0, 1, 2, 3, 4, 5]
+
+[tiers.0]
+providers = ["duckduckgo", "mojeek"]
+timeout_secs = 10
+
+[tiers.1]
+providers = ["jina", "serper"]
+timeout_secs = 15
+
+[tiers.2]
+providers = ["brave"]
+timeout_secs = 15
+
+[tiers.3]
+providers = ["dataforseo"]
+timeout_secs = 20
+
+[tiers.4]
+providers = ["searxng"]
+timeout_secs = 20
+
+[tiers.5]
+providers = []
+timeout_secs = 30
+# Tier 5 (Playwright) is deferred. The tier exists but is empty in v1.

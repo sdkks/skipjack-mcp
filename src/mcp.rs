@@ -17,7 +17,7 @@ use std::time::Duration;
 use rmcp::{
     handler::server::router::Router,
     handler::server::tool::{ToolCallContext, ToolRoute},
-    model::{CallToolResult, ErrorCode, Implementation, ServerInfo, Tool},
+    model::{CallToolResult, ErrorCode, Implementation, ServerCapabilities, ServerInfo, Tool},
     serve_server, ErrorData, ServerHandler,
 };
 use schemars::JsonSchema;
@@ -273,7 +273,7 @@ struct MetasearchServer {
 
 impl ServerHandler for MetasearchServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(Default::default())
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("skipjackd", env!("CARGO_PKG_VERSION")))
             .with_instructions(
                 "Multi-provider web search daemon with anti-blocking, caching, and MCP integration",

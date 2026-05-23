@@ -187,10 +187,13 @@ enum ReadError {
 /// the placeholder stubs here are replaced with real implementations.
 async fn dispatch_request(request: Request, _config: &Config, manager: &Manager) -> Response {
     match request {
-        Request::Search(_search_req) => Response::Error {
-            code: -32601,
-            message: "Search: not yet implemented".into(),
-            data: None,
+        Request::Search(search_req) => match manager.search(&search_req).await {
+            Ok(response) => Response::SearchResult(response),
+            Err(e) => Response::Error {
+                code: -32603,
+                message: format!("Search failed: {}", e),
+                data: None,
+            },
         },
         Request::ListProviders => {
             let health_snapshot = manager.health_snapshot().await;
@@ -367,9 +370,10 @@ mod tests {
         }
     }
 
-    /// A valid Search request (unimplemented) should return an Error with -32601.
+    /// A Search request against an empty catalog should return a valid SearchResult
+    /// with zero results (no providers configured).
     #[tokio::test]
-    async fn unimplemented_request_returns_method_not_found() {
+    async fn search_request_empty_catalog_returns_empty_results() {
         let dir = tempfile::tempdir().expect("create temp dir");
         let _guard = DB_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let config = Arc::new(test_config(&dir));
@@ -401,10 +405,11 @@ mod tests {
         let response: Response =
             serde_json::from_str(response_line.trim()).expect("parse response");
         match response {
-            Response::Error { code, .. } => {
-                assert_eq!(code, -32601);
+            Response::SearchResult(sr) => {
+                assert_eq!(sr.results.len(), 0);
+                assert_eq!(sr.total_found, 0);
             }
-            other => panic!("expected Error response, got: {:?}", other),
+            other => panic!("expected SearchResult response, got: {:?}", other),
         }
     }
 

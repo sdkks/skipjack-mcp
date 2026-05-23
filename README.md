@@ -28,11 +28,11 @@ cp config.toml ~/.config/skipjackd/config.toml
 
 skipjackd is a single binary with three personalities:
 
-| Invocation | Mode | Description |
-|---|---|---|
-| `skipjackd` (no args) | **MCP server** | Listens on stdio for MCP JSON-RPC requests from AI agents |
-| `skipjackd --daemon` | **Daemon** | Background process listening on a Unix domain socket |
-| `skipjackd <subcommand>` | **CLI** | One-shot commands that talk to the daemon over the socket |
+| Invocation               | Mode           | Description                                               |
+| ------------------------ | -------------- | --------------------------------------------------------- |
+| `skipjackd` (no args)    | **MCP server** | Listens on stdio for MCP JSON-RPC requests from AI agents |
+| `skipjackd --daemon`     | **Daemon**     | Background process listening on a Unix domain socket      |
+| `skipjackd <subcommand>` | **CLI**        | One-shot commands that talk to the daemon over the socket |
 
 ## CLI subcommands
 
@@ -58,11 +58,11 @@ skipjackd --version          Print version and git SHA
 
 When running in MCP mode, three tools are exposed to the AI agent:
 
-| Tool | Description |
-|---|---|
-| `search` | Execute a multi-provider search with optional filters, limit, and dispatch mode |
-| `list_providers` | List all configured providers with their current health status |
-| `cache_stats` | Retrieve cache hit/miss/eviction statistics |
+| Tool             | Description                                                                     |
+| ---------------- | ------------------------------------------------------------------------------- |
+| `search`         | Execute a multi-provider search with optional filters, limit, and dispatch mode |
+| `list_providers` | List all configured providers with their current health status                  |
+| `cache_stats`    | Retrieve cache hit/miss/eviction statistics                                     |
 
 Wire it into your MCP client by adding to `mcp.json`:
 
@@ -77,16 +77,27 @@ Wire it into your MCP client by adding to `mcp.json`:
 }
 ```
 
+Or install globally with a single command:
+
+```bash
+claude mcp add skipjackd -- skipjackd # project scope
+claude mcp add skipjackd --scope user -- skipjackd # user scope (global)
+```
+
+This registers `skipjackd` as an MCP server in Claude Code.
+
+**The MCP server is a proxy to the daemon** — you must have `skipjackd --daemon` running in the background. The MCP server connects to the daemon's Unix socket internally, so the daemon handles all provider communication, caching, and health tracking.
+
 See `mcp.json.example` in the repo.
 
 ## Search providers
 
-| Provider | Method | Auth | Configuration |
-|---|---|---|---|
-| DuckDuckGo | HTML scraping | None | No key needed — works out of the box |
-| Jina AI | `s.jina.ai` API | API key | `api_key` or `api_key_env = "JINA_API_KEY"` |
-| Brave Search | API | API key | `api_key` or `api_key_env = "BRAVE_API_KEY"` |
-| SearXNG | JSON API | None | `base_url = "http://localhost:8080"` (your instance) |
+| Provider     | Method          | Auth    | Configuration                                        |
+| ------------ | --------------- | ------- | ---------------------------------------------------- |
+| DuckDuckGo   | HTML scraping   | None    | No key needed — works out of the box                 |
+| Jina AI      | `s.jina.ai` API | API key | `api_key` or `api_key_env = "JINA_API_KEY"`          |
+| Brave Search | API             | API key | `api_key` or `api_key_env = "BRAVE_API_KEY"`         |
+| SearXNG      | JSON API        | None    | `base_url = "http://localhost:8080"` (your instance) |
 
 ### API keys
 

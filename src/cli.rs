@@ -768,17 +768,16 @@ CONFIGURATION:
 
 PROVIDER MODEL:
 
-  The daemon dispatches searches across a tiered provider ladder:
-    Tier 0: Free/no-key (DuckDuckGo, Mojeek)
-    Tier 1: Free/API-key (Jina AI, Serper)
-    Tier 2: Free/moderate-rate (ScraperAPI, Brave free)
-    Tier 3: Paid/reliable (Brave paid, DataForSEO)
-    Tier 4: Self-hosted (SearXNG)
-    Tier 5: Last-resort scraper (Playwright browser)
+  The daemon dispatches searches across configured providers:
+    DuckDuckGo — HTML scraping, no API key needed
+    Brave      — REST API, requires API key
+    Jina AI    — REST API, requires API key
+    SearXNG    — JSON API, requires running instance (base_url)
 
   Dispatch modes:
-    concurrent — Fire all non-Playwright providers at once, merge results.
+    concurrent — Fire all healthy providers at once, merge results.
     tiered     — Execute tiers sequentially, stop when results >= limit.
+  Default is concurrent. Individual providers can be selected with -p.
 
 FILES:
 

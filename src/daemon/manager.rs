@@ -420,6 +420,37 @@ impl Manager {
                 .map_err(|e| anyhow::anyhow!("failed to create DuckDuckGo provider: {}", e))?;
                 Ok(Box::new(provider))
             }
+            "brave" => {
+                let provider = crate::search::providers::brave::BraveProvider::new(
+                    client_config,
+                    rate_limiter,
+                    rpm,
+                    cfg.api_key.clone(),
+                )
+                .map_err(|e| anyhow::anyhow!("failed to create Brave provider: {}", e))?;
+                Ok(Box::new(provider))
+            }
+            "jina" => {
+                let provider = crate::search::providers::jina::JinaProvider::new(
+                    client_config,
+                    rate_limiter,
+                    rpm,
+                    cfg.api_key.clone(),
+                    cfg.base_url.clone(),
+                )
+                .map_err(|e| anyhow::anyhow!("failed to create Jina provider: {}", e))?;
+                Ok(Box::new(provider))
+            }
+            "searxng" => {
+                let provider = crate::search::providers::searxng::SearxngProvider::new(
+                    cfg.base_url.clone(),
+                    client_config,
+                    rate_limiter,
+                    rpm,
+                )
+                .map_err(|e| anyhow::anyhow!("failed to create SearXNG provider: {}", e))?;
+                Ok(Box::new(provider))
+            }
             other => {
                 anyhow::bail!("unknown provider type: '{}'", other);
             }

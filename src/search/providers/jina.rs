@@ -30,15 +30,8 @@ const DEFAULT_JINA_RPM: u32 = 100;
 struct JinaResponse {
     /// HTTP-equivalent status code from Jina.
     code: u16,
-    /// Response data payload.
-    data: JinaData,
-}
-
-/// Data payload within a Jina AI response.
-#[derive(Debug, Deserialize)]
-struct JinaData {
-    /// Search result items.
-    results: Vec<JinaResult>,
+    /// Response data payload — flat array of search results.
+    data: Vec<JinaResult>,
 }
 
 /// A single search result from the Jina AI API.
@@ -213,7 +206,7 @@ impl JinaProvider {
 
         let mut results = Vec::new();
 
-        for (i, item) in response.data.results.into_iter().enumerate() {
+        for (i, item) in response.data.into_iter().enumerate() {
             let title = item.title.unwrap_or_default().trim().to_string();
             let url = item.url.unwrap_or_default().trim().to_string();
 
@@ -427,7 +420,7 @@ mod tests {
     /// An empty JSON data object produces zero results (no panic).
     #[test]
     fn parse_results_empty_data_yields_empty_vec() {
-        let json = r#"{"code": 200, "data": {"results": []}}"#;
+        let json = r#"{"code": 200, "data": []}"#;
         let results = JinaProvider::parse_results(json).expect("parse empty results");
         assert!(results.is_empty());
     }
@@ -437,12 +430,10 @@ mod tests {
     fn parse_results_skips_entries_with_empty_title() {
         let json = r#"{
   "code": 200,
-  "data": {
-    "results": [
-      {"title": "", "url": "https://example.com", "description": "Should be skipped.", "published_date": null},
-      {"title": "Valid Title", "url": "https://valid.com", "description": "Valid snippet.", "published_date": null}
-    ]
-  }
+  "data": [
+    {"title": "", "url": "https://example.com", "description": "Should be skipped.", "published_date": null},
+    {"title": "Valid Title", "url": "https://valid.com", "description": "Valid snippet.", "published_date": null}
+  ]
 }"#;
         let results = JinaProvider::parse_results(json).expect("parse");
         assert_eq!(results.len(), 1);
@@ -455,12 +446,10 @@ mod tests {
     fn parse_results_skips_entries_with_empty_url() {
         let json = r#"{
   "code": 200,
-  "data": {
-    "results": [
-      {"title": "No URL", "url": "", "description": "Should be skipped.", "published_date": null},
-      {"title": "Has URL", "url": "https://hasurl.com", "description": "Valid.", "published_date": null}
-    ]
-  }
+  "data": [
+    {"title": "No URL", "url": "", "description": "Should be skipped.", "published_date": null},
+    {"title": "Has URL", "url": "https://hasurl.com", "description": "Valid.", "published_date": null}
+  ]
 }"#;
         let results = JinaProvider::parse_results(json).expect("parse");
         assert_eq!(results.len(), 1);
@@ -470,7 +459,7 @@ mod tests {
     /// Non-200 response code returns an HttpError.
     #[test]
     fn parse_results_non_200_code_returns_error() {
-        let json = r#"{"code": 500, "data": {"results": []}}"#;
+        let json = r#"{"code": 500, "data": []}"#;
         let err = JinaProvider::parse_results(json).unwrap_err();
         match err {
             ProviderError::HttpError { status, .. } => {

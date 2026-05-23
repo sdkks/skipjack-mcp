@@ -212,7 +212,10 @@ pub async fn run() -> anyhow::Result<()> {
     let daemon_name = config.daemon.name.clone();
 
     // Validate daemon name against character allowlist to prevent path traversal.
-    if !daemon_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+    if !daemon_name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
         bail!(
             "invalid daemon name: '{}'. Daemon name must contain only \
              alphanumeric characters, underscores, and hyphens.",
@@ -220,10 +223,9 @@ pub async fn run() -> anyhow::Result<()> {
         );
     }
 
-    let socket_path = PathBuf::from(&config.daemon.socket_dir)
-        .join(format!("{}.sock", daemon_name));
-    let pid_path = PathBuf::from(&config.daemon.pid_dir)
-        .join(format!("{}.pid", daemon_name));
+    let socket_path =
+        PathBuf::from(&config.daemon.socket_dir).join(format!("{}.sock", daemon_name));
+    let pid_path = PathBuf::from(&config.daemon.pid_dir).join(format!("{}.pid", daemon_name));
 
     match cli.command {
         Commands::Search {
@@ -238,9 +240,18 @@ pub async fn run() -> anyhow::Result<()> {
             dispatch_mode,
         } => {
             cmd_search(
-                &socket_path, query, limit, providers, language, country,
-                !no_safe_search, freshness, format, dispatch_mode,
-            ).await
+                &socket_path,
+                query,
+                limit,
+                providers,
+                language,
+                country,
+                !no_safe_search,
+                freshness,
+                format,
+                dispatch_mode,
+            )
+            .await
         }
         Commands::Status => cmd_status(&socket_path).await,
         Commands::Stop => cmd_stop(&pid_path, &socket_path, &daemon_name),
@@ -263,19 +274,25 @@ pub async fn run() -> anyhow::Result<()> {
 ///
 /// Returns `Err` with a "daemon not running" message if the socket is
 /// unreachable (exit code 2 per FR-3.6).
-async fn send_request(socket_path: &std::path::Path, request: &Request) -> anyhow::Result<Response> {
+async fn send_request(
+    socket_path: &std::path::Path,
+    request: &Request,
+) -> anyhow::Result<Response> {
     let mut stream = UnixStream::connect(socket_path)
         .await
         .with_context(|| "daemon not running")?;
 
     // Serialize request to JSON, append newline.
-    let mut json = serde_json::to_string(request)
-        .context("failed to serialize request")?;
+    let mut json = serde_json::to_string(request).context("failed to serialize request")?;
     json.push('\n');
 
-    stream.write_all(json.as_bytes()).await
+    stream
+        .write_all(json.as_bytes())
+        .await
         .context("failed to send request to daemon")?;
-    stream.flush().await
+    stream
+        .flush()
+        .await
         .context("failed to flush request to daemon")?;
 
     // Read response line.
@@ -297,8 +314,8 @@ async fn send_request(socket_path: &std::path::Path, request: &Request) -> anyho
         bail!("daemon closed connection without response");
     }
 
-    let response: Response = serde_json::from_str(line.trim())
-        .context("failed to parse daemon response")?;
+    let response: Response =
+        serde_json::from_str(line.trim()).context("failed to parse daemon response")?;
 
     Ok(response)
 }
@@ -319,9 +336,7 @@ async fn read_line_limited<R: tokio::io::AsyncRead + Unpin>(
     loop {
         let bytes_in_buffer = reader.buffer().len();
         if bytes_in_buffer == 0 {
-            reader.fill_buf().await.map_err(|e| {
-                ReadError::Io(e)
-            })?;
+            reader.fill_buf().await.map_err(ReadError::Io)?;
             if reader.buffer().is_empty() {
                 return Ok(0); // EOF
             }
@@ -367,7 +382,11 @@ enum ReadError {
 /// handle the specific response type.
 fn check_response_error(response: Response) -> anyhow::Result<Response> {
     match &response {
-        Response::Error { code: _, message, data: _ } => {
+        Response::Error {
+            code: _,
+            message,
+            data: _,
+        } => {
             bail!("{}", message);
         }
         _ => Ok(response),
@@ -387,6 +406,7 @@ fn print_response_json(response: &Response) {
 // ---------------------------------------------------------------------------
 
 /// Execute the `search` subcommand.
+#[allow(clippy::too_many_arguments)]
 async fn cmd_search(
     socket_path: &std::path::Path,
     query: String,
@@ -426,10 +446,12 @@ async fn cmd_search(
                     if search_resp.cache_hit {
                         eprintln!("\u{1f4e6} cached ({} ms)", search_resp.elapsed_ms);
                     } else {
-                        eprintln!("\u{23f3} {} ms, {} results from {} providers",
+                        eprintln!(
+                            "\u{23f3} {} ms, {} results from {} providers",
                             search_resp.elapsed_ms,
                             search_resp.total_found,
-                            search_resp.providers_used.join(", "));
+                            search_resp.providers_used.join(", ")
+                        );
                     }
 
                     for (i, result) in search_resp.results.iter().enumerate() {
@@ -439,7 +461,10 @@ async fn cmd_search(
                         if let Some(ref date) = result.published_date {
                             print!("   [{}]", date);
                         }
-                        println!("   (via {}, score: {:.2})", result.provider_name, result.rank_score);
+                        println!(
+                            "   (via {}, score: {:.2})",
+                            result.provider_name, result.rank_score
+                        );
                     }
 
                     if search_resp.results.is_empty() {
@@ -471,7 +496,12 @@ async fn cmd_status(socket_path: &std::path::Path) -> anyhow::Result<()> {
     let cache_resp = check_response_error(cache_resp)?;
 
     // Display health.
-    if let Response::Health { status, uptime_secs, version } = health_resp {
+    if let Response::Health {
+        status,
+        uptime_secs,
+        version,
+    } = health_resp
+    {
         let uptime = format_duration(uptime_secs);
         println!("=== Daemon Status ===");
         println!("  Status:   {}", status);
@@ -487,18 +517,27 @@ async fn cmd_status(socket_path: &std::path::Path) -> anyhow::Result<()> {
         if providers.is_empty() {
             println!("  (no providers configured)");
         } else {
-            println!("  {:<20} {:>8} {:>10} {:>8} {:>10}  Last Error",
-                "Provider", "Healthy", "Degraded", "Score", "Succ/Fail");
-            println!("  {:-<20} {:-<8} {:-<10} {:-<8} {:-<10}  {:-<20}",
-                "", "", "", "", "", "");
+            println!(
+                "  {:<20} {:>8} {:>10} {:>8} {:>10}  Last Error",
+                "Provider", "Healthy", "Degraded", "Score", "Succ/Fail"
+            );
+            println!(
+                "  {:-<20} {:-<8} {:-<10} {:-<8} {:-<10}  {:-<20}",
+                "", "", "", "", "", ""
+            );
             for p in &providers {
                 let healthy = if p.healthy { "YES" } else { "no" };
                 let degraded = if p.degraded { "YES" } else { "no" };
                 let last_err = p.last_error.as_deref().unwrap_or("-");
                 println!(
                     "  {:<20} {:>8} {:>10} {:>8.2} {:>4}/{:<5}  {}",
-                    p.name, healthy, degraded, p.health_score,
-                    p.success_count, p.failure_count, last_err
+                    p.name,
+                    healthy,
+                    degraded,
+                    p.health_score,
+                    p.success_count,
+                    p.failure_count,
+                    last_err
                 );
             }
         }
@@ -507,7 +546,14 @@ async fn cmd_status(socket_path: &std::path::Path) -> anyhow::Result<()> {
     println!();
 
     // Display cache stats.
-    if let Response::CacheStats { total_entries, total_size_bytes, hit_count, miss_count, hit_rate } = cache_resp {
+    if let Response::CacheStats {
+        total_entries,
+        total_size_bytes,
+        hit_count,
+        miss_count,
+        hit_rate,
+    } = cache_resp
+    {
         let total = hit_count + miss_count;
         let hit_pct = if total > 0 {
             format!("{:.1}%", hit_rate * 100.0)
@@ -546,7 +592,11 @@ fn verify_pid(pid: i32, daemon_name: &str) -> bool {
     {
         let mut path_buf = [0u8; 4096];
         let ret = unsafe {
-            libc::proc_pidpath(pid, path_buf.as_mut_ptr() as *mut libc::c_void, path_buf.len() as u32)
+            libc::proc_pidpath(
+                pid,
+                path_buf.as_mut_ptr() as *mut libc::c_void,
+                path_buf.len() as u32,
+            )
         };
         if ret > 0 {
             let path = String::from_utf8_lossy(&path_buf[..ret as usize]);
@@ -556,29 +606,33 @@ fn verify_pid(pid: i32, daemon_name: &str) -> bool {
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
-        eprintln!(
-            "warning: cannot verify PID identity on this platform — proceeding with SIGTERM"
-        );
+        eprintln!("warning: cannot verify PID identity on this platform — proceeding with SIGTERM");
         true
     }
 }
 
 /// Execute the `stop` subcommand — send SIGTERM to the daemon and wait for
 /// the socket to be removed.
-fn cmd_stop(pid_path: &std::path::Path, socket_path: &std::path::Path, daemon_name: &str) -> anyhow::Result<()> {
+fn cmd_stop(
+    pid_path: &std::path::Path,
+    socket_path: &std::path::Path,
+    daemon_name: &str,
+) -> anyhow::Result<()> {
     // Read the PID file.
-    let pid_str = fs::read_to_string(pid_path)
-        .with_context(|| {
-            format!(
-                "cannot read PID file for daemon '{}': daemon may not be running",
-                daemon_name
-            )
-        })?;
+    let pid_str = fs::read_to_string(pid_path).with_context(|| {
+        format!(
+            "cannot read PID file for daemon '{}': daemon may not be running",
+            daemon_name
+        )
+    })?;
 
-    let pid: i32 = pid_str
-        .trim()
-        .parse()
-        .with_context(|| format!("invalid PID in PID file for daemon '{}': {}", daemon_name, pid_str.trim()))?;
+    let pid: i32 = pid_str.trim().parse().with_context(|| {
+        format!(
+            "invalid PID in PID file for daemon '{}': {}",
+            daemon_name,
+            pid_str.trim()
+        )
+    })?;
 
     // Verify the PID still belongs to the daemon before sending SIGTERM.
     if !verify_pid(pid, daemon_name) {
@@ -586,12 +640,16 @@ fn cmd_stop(pid_path: &std::path::Path, socket_path: &std::path::Path, daemon_na
             "PID {} does not belong to daemon '{}'. The PID file may be stale — \
              the daemon may have crashed or been terminated by an external agent. \
              Remove the PID file manually if the daemon is no longer running.",
-            pid, daemon_name
+            pid,
+            daemon_name
         );
     }
 
     // Send SIGTERM.
-    eprintln!("Sending SIGTERM to daemon '{}' (pid {})...", daemon_name, pid);
+    eprintln!(
+        "Sending SIGTERM to daemon '{}' (pid {})...",
+        daemon_name, pid
+    );
 
     // SAFETY: kill(pid, SIGTERM) is safe because:
     // - pid is a valid pid_t (i32) parsed from the PID file
@@ -776,10 +834,14 @@ fn print_providers_table(providers: &[ProviderInfo]) {
         return;
     }
 
-    println!("{:<20} {:>10} {:>8} {:>6}  {}  Description",
-        "Provider", "Available", "Healthy", "Score", "Tags");
-    println!("{:-<20} {:-<10} {:-<8} {:-<6}  {}  {:-<20}",
-        "", "", "", "", "----", "");
+    println!(
+        "{:<20} {:>10} {:>8} {:>6}  Tags  Description",
+        "Provider", "Available", "Healthy", "Score"
+    );
+    println!(
+        "{:-<20} {:-<10} {:-<8} {:-<6}  ----  {:-<20}",
+        "", "", "", "", ""
+    );
 
     for p in providers {
         let available = if p.available { "YES" } else { "no" };
@@ -787,8 +849,7 @@ fn print_providers_table(providers: &[ProviderInfo]) {
         let tags = p.tags.join(", ");
         println!(
             "{:<20} {:>10} {:>8} {:>6.2}  {}  {}",
-            p.name, available, healthy, p.health_score,
-            tags, p.description
+            p.name, available, healthy, p.health_score, tags, p.description
         );
     }
 }
@@ -859,11 +920,7 @@ mod tests {
     /// all optional flags.
     #[test]
     fn test_cli_parse_search_minimal() {
-        let cli = Cli::try_parse_from([
-            "metasearchd",
-            "search",
-            "rust programming",
-        ]);
+        let cli = Cli::try_parse_from(["metasearchd", "search", "rust programming"]);
         assert!(cli.is_ok(), "minimal search should parse: {:?}", cli.err());
     }
 
@@ -874,19 +931,37 @@ mod tests {
             "metasearchd",
             "search",
             "rust async",
-            "--limit", "5",
-            "--providers", "duckduckgo,brave",
-            "--language", "en",
-            "--country", "us",
+            "--limit",
+            "5",
+            "--providers",
+            "duckduckgo,brave",
+            "--language",
+            "en",
+            "--country",
+            "us",
             "--no-safe-search",
-            "--freshness", "month",
-            "--format", "json",
-            "--dispatch-mode", "tiered",
-        ]).unwrap();
+            "--freshness",
+            "month",
+            "--format",
+            "json",
+            "--dispatch-mode",
+            "tiered",
+        ])
+        .unwrap();
         match cli.command {
-            Commands::Search { format, dispatch_mode, .. } => {
-                assert!(matches!(format, OutputFormat::Json), "format should be Json");
-                assert!(matches!(dispatch_mode, Some(DispatchModeCli::Tiered)), "dispatch_mode should be Tiered");
+            Commands::Search {
+                format,
+                dispatch_mode,
+                ..
+            } => {
+                assert!(
+                    matches!(format, OutputFormat::Json),
+                    "format should be Json"
+                );
+                assert!(
+                    matches!(dispatch_mode, Some(DispatchModeCli::Tiered)),
+                    "dispatch_mode should be Tiered"
+                );
             }
             _ => panic!("expected Search command"),
         }
@@ -926,10 +1001,12 @@ mod tests {
         let cli = Cli::try_parse_from(["metasearchd", "cache-clear"]);
         assert!(cli.is_ok(), "cache-clear should parse: {:?}", cli.err());
 
-        let cli = Cli::try_parse_from([
-            "metasearchd", "cache-clear", "--provider", "duckduckgo",
-        ]);
-        assert!(cli.is_ok(), "cache-clear with provider should parse: {:?}", cli.err());
+        let cli = Cli::try_parse_from(["metasearchd", "cache-clear", "--provider", "duckduckgo"]);
+        assert!(
+            cli.is_ok(),
+            "cache-clear with provider should parse: {:?}",
+            cli.err()
+        );
     }
 
     /// Global --config flag should parse.
@@ -937,10 +1014,16 @@ mod tests {
     fn test_cli_parse_with_global_config() {
         let cli = Cli::try_parse_from([
             "metasearchd",
-            "--config", "/tmp/test.toml",
-            "search", "test",
+            "--config",
+            "/tmp/test.toml",
+            "search",
+            "test",
         ]);
-        assert!(cli.is_ok(), "global config flag should parse: {:?}", cli.err());
+        assert!(
+            cli.is_ok(),
+            "global config flag should parse: {:?}",
+            cli.err()
+        );
     }
 
     /// Helper function to check that FreshnessCli converts to Freshness correctly.
@@ -972,10 +1055,12 @@ mod tests {
     /// The search command with --no-safe-search flag means safe_search is OFF.
     #[test]
     fn test_search_safe_search_flag() {
-        let cli = Cli::try_parse_from([
-            "metasearchd", "search", "--no-safe-search", "test query",
-        ]);
-        assert!(cli.is_ok(), "search with --no-safe-search should parse: {:?}", cli.err());
+        let cli = Cli::try_parse_from(["metasearchd", "search", "--no-safe-search", "test query"]);
+        assert!(
+            cli.is_ok(),
+            "search with --no-safe-search should parse: {:?}",
+            cli.err()
+        );
     }
 
     /// check_response_error should pass through success responses.
@@ -987,7 +1072,11 @@ mod tests {
             version: "0.1.0".into(),
         };
         let result = check_response_error(resp);
-        assert!(result.is_ok(), "success response should pass through: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "success response should pass through: {:?}",
+            result.err()
+        );
     }
 
     /// check_response_error should bail on error responses.
@@ -1001,7 +1090,10 @@ mod tests {
         let result = check_response_error(resp);
         assert!(result.is_err(), "error response should bail");
         assert!(
-            result.unwrap_err().to_string().contains("something went wrong"),
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("something went wrong"),
             "error message should be preserved"
         );
     }
@@ -1012,7 +1104,9 @@ mod tests {
         let data = b"hello world\n";
         let mut reader = BufReader::new(&data[..]);
         let mut buf = String::new();
-        let n = read_line_limited(&mut reader, &mut buf, 1024).await.unwrap();
+        let n = read_line_limited(&mut reader, &mut buf, 1024)
+            .await
+            .unwrap();
         assert_eq!(n, 12);
         assert_eq!(buf, "hello world");
     }
@@ -1035,8 +1129,11 @@ mod tests {
         let mut reader = BufReader::new(&data[..]);
         let mut buf = String::new();
         let result = read_line_limited(&mut reader, &mut buf, 5).await;
-        assert!(matches!(result, Err(ReadError::MaxSizeExceeded)),
-            "should return MaxSizeExceeded, got {:?}", result.err());
+        assert!(
+            matches!(result, Err(ReadError::MaxSizeExceeded)),
+            "should return MaxSizeExceeded, got {:?}",
+            result.err()
+        );
     }
 
     /// print_providers_table with empty list should print placeholder.
@@ -1050,16 +1147,14 @@ mod tests {
     /// print_providers_table with providers should print rows.
     #[test]
     fn test_print_providers_table_with_data() {
-        let providers = vec![
-            ProviderInfo {
-                name: "test-provider".into(),
-                description: "A test provider".into(),
-                tags: vec!["test".into()],
-                available: true,
-                healthy: true,
-                health_score: 1.0,
-            },
-        ];
+        let providers = vec![ProviderInfo {
+            name: "test-provider".into(),
+            description: "A test provider".into(),
+            tags: vec!["test".into()],
+            available: true,
+            healthy: true,
+            health_score: 1.0,
+        }];
         print_providers_table(&providers);
         // No panic is the primary assertion; the function prints to stdout.
     }

@@ -59,7 +59,8 @@ pub fn compute_composite_score(
                     Some(date) => {
                         let today = chrono::Utc::now().date_naive();
                         let age_days = (today - date).num_days();
-                        if age_days >= 0 && (age_days as u32) <= config.freshness_bonus.window_days {
+                        if age_days >= 0 && (age_days as u32) <= config.freshness_bonus.window_days
+                        {
                             1.0
                         } else {
                             0.0

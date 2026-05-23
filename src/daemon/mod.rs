@@ -90,14 +90,11 @@ impl Daemon {
     /// - The socket cannot be created or bound.
     /// - The PID file cannot be written.
     /// - Signal handlers cannot be registered.
-    pub async fn start(
-        config: Arc<Config>,
-        config_path: Option<String>,
-    ) -> anyhow::Result<Daemon> {
-        let socket_path = PathBuf::from(&config.daemon.socket_dir)
-            .join(format!("{}.sock", config.daemon.name));
-        let pid_path = PathBuf::from(&config.daemon.pid_dir)
-            .join(format!("{}.pid", config.daemon.name));
+    pub async fn start(config: Arc<Config>, config_path: Option<String>) -> anyhow::Result<Daemon> {
+        let socket_path =
+            PathBuf::from(&config.daemon.socket_dir).join(format!("{}.sock", config.daemon.name));
+        let pid_path =
+            PathBuf::from(&config.daemon.pid_dir).join(format!("{}.pid", config.daemon.name));
 
         // 1. Check for existing daemon.
         check_pid_file(&pid_path)?;
@@ -124,7 +121,12 @@ impl Daemon {
         let shutdown_signal = Arc::clone(&shutdown_notify);
         let reload_flag = Arc::clone(&reload_requested);
         let config_for_signal = Arc::clone(&config_lock);
-        tokio::spawn(signal_handler(shutdown_signal, reload_flag, config_for_signal, config_path));
+        tokio::spawn(signal_handler(
+            shutdown_signal,
+            reload_flag,
+            config_for_signal,
+            config_path,
+        ));
 
         // 6. Spawn the accept loop.
         let config_for_accept = Arc::clone(&config_lock);
@@ -289,8 +291,12 @@ fn is_process_alive(pid: u32) -> bool {
 fn create_socket(socket_path: &Path) -> anyhow::Result<UnixListener> {
     // Remove any stale socket file.
     if socket_path.exists() {
-        std::fs::remove_file(socket_path)
-            .with_context(|| format!("Failed to remove existing socket: {}", socket_path.display()))?;
+        std::fs::remove_file(socket_path).with_context(|| {
+            format!(
+                "Failed to remove existing socket: {}",
+                socket_path.display()
+            )
+        })?;
     }
 
     // Ensure the parent directory exists.
@@ -303,16 +309,14 @@ fn create_socket(socket_path: &Path) -> anyhow::Result<UnixListener> {
     let addr = SockAddr::unix(socket_path)
         .with_context(|| format!("Invalid socket path: {}", socket_path.display()))?;
 
-    let socket = Socket::new(Domain::UNIX, Type::STREAM, None)
-        .context("Failed to create Unix socket")?;
+    let socket =
+        Socket::new(Domain::UNIX, Type::STREAM, None).context("Failed to create Unix socket")?;
 
     socket
         .bind(&addr)
         .with_context(|| format!("Failed to bind socket: {}", socket_path.display()))?;
 
-    socket
-        .listen(128)
-        .context("Failed to listen on socket")?;
+    socket.listen(128).context("Failed to listen on socket")?;
 
     // Tokio requires non-blocking file descriptors. socket2 creates blocking
     // sockets by default; we must set non-blocking mode before converting to
@@ -322,8 +326,16 @@ fn create_socket(socket_path: &Path) -> anyhow::Result<UnixListener> {
         .context("Failed to set socket to non-blocking")?;
 
     // Set 0600 permissions on the socket file BEFORE any connections are accepted.
-    std::fs::set_permissions(socket_path, <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o600))
-        .with_context(|| format!("Failed to set socket permissions: {}", socket_path.display()))?;
+    std::fs::set_permissions(
+        socket_path,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o600),
+    )
+    .with_context(|| {
+        format!(
+            "Failed to set socket permissions: {}",
+            socket_path.display()
+        )
+    })?;
 
     tracing::debug!(
         path = %socket_path.display(),
@@ -429,7 +441,8 @@ async fn signal_handler(
     config: Arc<RwLock<Arc<Config>>>,
     config_path: Option<String>,
 ) {
-    let mut sigterm = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+    let mut sigterm = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+    {
         Ok(signal) => signal,
         Err(e) => {
             tracing::error!(error = %e, "failed to register SIGTERM handler");
@@ -437,7 +450,8 @@ async fn signal_handler(
         }
     };
 
-    let mut sigint = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()) {
+    let mut sigint = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+    {
         Ok(signal) => signal,
         Err(e) => {
             tracing::error!(error = %e, "failed to register SIGINT handler");
@@ -553,10 +567,7 @@ mod tests {
         let result = check_pid_file(&pid_path);
         assert!(result.is_err());
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("already running"),
+            result.unwrap_err().to_string().contains("already running"),
             "expected 'already running' error"
         );
     }
@@ -570,7 +581,10 @@ mod tests {
         // PID 99999 is very unlikely to exist.
         std::fs::write(&pid_path, "99999\n").expect("write pid");
         check_pid_file(&pid_path).expect("stale pid file should be cleaned up");
-        assert!(!pid_path.exists(), "stale pid file should have been removed");
+        assert!(
+            !pid_path.exists(),
+            "stale pid file should have been removed"
+        );
     }
 
     /// write_pid_file should create the PID file with the current PID.
@@ -656,9 +670,7 @@ mod tests {
         config.daemon.shutdown_grace_period_secs = 1;
         let config = config.freeze();
 
-        let daemon = Daemon::start(config, None)
-            .await
-            .expect("start daemon");
+        let daemon = Daemon::start(config, None).await.expect("start daemon");
 
         // Verify PID file exists.
         let pid_path = dir.path().join("test-lifecycle.pid");
@@ -673,7 +685,10 @@ mod tests {
             .await
             .expect("connect to daemon");
         use tokio::io::AsyncWriteExt;
-        stream.write_all(b"{\"type\":\"Health\"}\n").await.expect("write health request");
+        stream
+            .write_all(b"{\"type\":\"Health\"}\n")
+            .await
+            .expect("write health request");
         stream.flush().await.expect("flush");
 
         // Read response.
@@ -681,7 +696,10 @@ mod tests {
         let mut reader = BufReader::new(&mut stream);
         let mut line = String::new();
         // Read until we get the response line.
-        reader.read_line(&mut line).await.expect("read response line");
+        reader
+            .read_line(&mut line)
+            .await
+            .expect("read response line");
 
         let response: Response = serde_json::from_str(line.trim()).expect("parse response");
         assert!(
@@ -697,8 +715,14 @@ mod tests {
         daemon.wait().await.expect("daemon should exit cleanly");
 
         // Verify cleanup: PID file and socket file removed.
-        assert!(!pid_path.exists(), "PID file should be removed after shutdown");
-        assert!(!socket_path.exists(), "socket file should be removed after shutdown");
+        assert!(
+            !pid_path.exists(),
+            "PID file should be removed after shutdown"
+        );
+        assert!(
+            !socket_path.exists(),
+            "socket file should be removed after shutdown"
+        );
     }
 
     /// Starting a second daemon should fail with "already running".
@@ -714,7 +738,9 @@ mod tests {
         let config = config.freeze();
         let config2 = config.clone();
 
-        let daemon = Daemon::start(config, None).await.expect("start first daemon");
+        let daemon = Daemon::start(config, None)
+            .await
+            .expect("start first daemon");
 
         // Second start should fail.
         let result = Daemon::start(config2, None).await;
@@ -726,7 +752,10 @@ mod tests {
 
         // Clean up.
         daemon.request_shutdown();
-        daemon.wait().await.expect("first daemon should exit cleanly");
+        daemon
+            .wait()
+            .await
+            .expect("first daemon should exit cleanly");
     }
 
     /// The socket path must be computed correctly from config values.
@@ -736,8 +765,8 @@ mod tests {
         config.daemon.name = "my-daemon".into();
         config.daemon.socket_dir = "/var/run".into();
 
-        let socket_path = PathBuf::from(&config.daemon.socket_dir)
-            .join(format!("{}.sock", config.daemon.name));
+        let socket_path =
+            PathBuf::from(&config.daemon.socket_dir).join(format!("{}.sock", config.daemon.name));
         assert_eq!(socket_path, PathBuf::from("/var/run/my-daemon.sock"));
     }
 
@@ -748,8 +777,8 @@ mod tests {
         config.daemon.name = "my-daemon".into();
         config.daemon.pid_dir = "/var/run".into();
 
-        let pid_path = PathBuf::from(&config.daemon.pid_dir)
-            .join(format!("{}.pid", config.daemon.name));
+        let pid_path =
+            PathBuf::from(&config.daemon.pid_dir).join(format!("{}.pid", config.daemon.name));
         assert_eq!(pid_path, PathBuf::from("/var/run/my-daemon.pid"));
     }
 }

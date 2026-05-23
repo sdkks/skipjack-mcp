@@ -96,7 +96,10 @@ fn map_daemon_error(code: i32) -> i32 {
 /// internal details (paths, provider config, partial stack traces) are not
 /// exposed to the MCP client or the LLM it serves.
 fn sanitize_daemon_error(raw_message: &str) -> String {
-    tracing::warn!(raw_message, "daemon error forwarded to MCP client (sanitized)");
+    tracing::warn!(
+        raw_message,
+        "daemon error forwarded to MCP client (sanitized)"
+    );
     "An internal daemon error occurred".to_string()
 }
 
@@ -137,45 +140,32 @@ impl DaemonClient {
     ///   be parsed.
     async fn send_request(&self, request: &Request) -> Result<Response, ErrorData> {
         // Connect to daemon socket.
-        let stream = UnixStream::connect(&self.socket_path)
-            .await
-            .map_err(|e| {
-                ErrorData::new(
-                    ErrorCode(-32000),
-                    format!("Daemon unreachable: {}", e),
-                    None,
-                )
-            })?;
+        let stream = UnixStream::connect(&self.socket_path).await.map_err(|e| {
+            ErrorData::new(
+                ErrorCode(-32000),
+                format!("Daemon unreachable: {}", e),
+                None,
+            )
+        })?;
 
         let (reader, mut writer) = tokio::io::split(stream);
         let mut buf_reader = BufReader::new(reader);
 
         // Serialize and send request.
-        let mut req_json =
-            serde_json::to_string(request).map_err(|e| {
-                ErrorData::invalid_params(format!("Failed to serialize request: {}", e), None)
-            })?;
+        let mut req_json = serde_json::to_string(request).map_err(|e| {
+            ErrorData::invalid_params(format!("Failed to serialize request: {}", e), None)
+        })?;
         req_json.push('\n');
-        writer
-            .write_all(req_json.as_bytes())
-            .await
-            .map_err(|e| {
-                ErrorData::new(
-                    ErrorCode(-32000),
-                    format!("Failed to send request: {}", e),
-                    None,
-                )
-            })?;
-        writer
-            .flush()
-            .await
-            .map_err(|e| {
-                ErrorData::new(
-                    ErrorCode(-32000),
-                    format!("Failed to flush: {}", e),
-                    None,
-                )
-            })?;
+        writer.write_all(req_json.as_bytes()).await.map_err(|e| {
+            ErrorData::new(
+                ErrorCode(-32000),
+                format!("Failed to send request: {}", e),
+                None,
+            )
+        })?;
+        writer.flush().await.map_err(|e| {
+            ErrorData::new(ErrorCode(-32000), format!("Failed to flush: {}", e), None)
+        })?;
 
         // Read response with a timeout.
         let read_future = async {
@@ -195,10 +185,7 @@ impl DaemonClient {
             Ok(result) => result,
             Err(_elapsed) => Err(ErrorData::new(
                 ErrorCode(-32001),
-                format!(
-                    "Search request timed out after {}s",
-                    self.timeout.as_secs()
-                ),
+                format!("Search request timed out after {}s", self.timeout.as_secs()),
                 None,
             )),
         }
@@ -304,16 +291,13 @@ impl MetasearchServer {
         ctx: ToolCallContext<'_, MetasearchServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let args = ctx.arguments.unwrap_or_default();
-        let params: SearchParams =
-            serde_json::from_value(serde_json::Value::Object(args)).map_err(|e| {
+        let params: SearchParams = serde_json::from_value(serde_json::Value::Object(args))
+            .map_err(|e| {
                 ErrorData::invalid_params(format!("Invalid search parameters: {}", e), None)
             })?;
 
         if params.query.trim().is_empty() {
-            return Err(ErrorData::invalid_params(
-                "Query must not be empty",
-                None,
-            ));
+            return Err(ErrorData::invalid_params("Query must not be empty", None));
         }
 
         let freshness = match params.freshness.as_deref() {
@@ -347,10 +331,7 @@ impl MetasearchServer {
 
         if params.limit == 0 || params.limit > 100 {
             return Err(ErrorData::invalid_params(
-                format!(
-                    "limit must be between 1 and 100, got {}",
-                    params.limit
-                ),
+                format!("limit must be between 1 and 100, got {}", params.limit),
                 None,
             ));
         }
@@ -385,13 +366,11 @@ impl MetasearchServer {
                     json,
                 )]))
             }
-            Response::Error { code, message, .. } => {
-                Err(ErrorData::new(
-                    ErrorCode(map_daemon_error(code)),
-                    sanitize_daemon_error(&message),
-                    None,
-                ))
-            }
+            Response::Error { code, message, .. } => Err(ErrorData::new(
+                ErrorCode(map_daemon_error(code)),
+                sanitize_daemon_error(&message),
+                None,
+            )),
             other => Err(ErrorData::new(
                 ErrorCode(-32000),
                 format!("Unexpected daemon response type for search: {:?}", other),
@@ -422,13 +401,11 @@ impl MetasearchServer {
                     json,
                 )]))
             }
-            Response::Error { code, message, .. } => {
-                Err(ErrorData::new(
-                    ErrorCode(map_daemon_error(code)),
-                    sanitize_daemon_error(&message),
-                    None,
-                ))
-            }
+            Response::Error { code, message, .. } => Err(ErrorData::new(
+                ErrorCode(map_daemon_error(code)),
+                sanitize_daemon_error(&message),
+                None,
+            )),
             other => Err(ErrorData::new(
                 ErrorCode(-32000),
                 format!(
@@ -463,13 +440,11 @@ impl MetasearchServer {
                     stats.to_string(),
                 )]))
             }
-            Response::Error { code, message, .. } => {
-                Err(ErrorData::new(
-                    ErrorCode(map_daemon_error(code)),
-                    sanitize_daemon_error(&message),
-                    None,
-                ))
-            }
+            Response::Error { code, message, .. } => Err(ErrorData::new(
+                ErrorCode(map_daemon_error(code)),
+                sanitize_daemon_error(&message),
+                None,
+            )),
             other => Err(ErrorData::new(
                 ErrorCode(-32000),
                 format!(
@@ -568,10 +543,13 @@ fn build_router(server: &Arc<MetasearchServer>) -> Router<MetasearchServer> {
 
     let search_handler = {
         let s = Arc::clone(&s);
-        ToolRoute::new_dyn(search_tool, move |ctx: ToolCallContext<'_, MetasearchServer>| {
-            let s = Arc::clone(&s);
-            Box::pin(async move { s.handle_search(ctx).await })
-        })
+        ToolRoute::new_dyn(
+            search_tool,
+            move |ctx: ToolCallContext<'_, MetasearchServer>| {
+                let s = Arc::clone(&s);
+                Box::pin(async move { s.handle_search(ctx).await })
+            },
+        )
     };
 
     let list_providers_tool = Tool::new(

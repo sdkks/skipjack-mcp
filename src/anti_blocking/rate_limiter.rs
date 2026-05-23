@@ -67,7 +67,10 @@ impl RateLimiter {
                 let window = Duration::from_secs(60);
 
                 // Prune expired entries.
-                while deque.front().map_or(false, |t| now.duration_since(*t) >= window) {
+                while deque
+                    .front()
+                    .is_some_and(|t| now.duration_since(*t) >= window)
+                {
                     deque.pop_front();
                 }
 
@@ -79,12 +82,11 @@ impl RateLimiter {
                 // At capacity: compute sleep until the oldest entry expires.
                 let oldest = deque.front().expect("deque must be non-empty at capacity");
                 let age = now.duration_since(*oldest);
-                let remaining = if age < window {
+                if age < window {
                     window - age
                 } else {
                     Duration::ZERO
-                };
-                remaining
+                }
             };
 
             if sleep_dur > Duration::ZERO {

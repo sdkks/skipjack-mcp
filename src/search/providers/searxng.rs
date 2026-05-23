@@ -148,7 +148,11 @@ impl SearxngProvider {
 
     /// Build the search URL with query parameters.
     fn build_search_url(&self, request: &SearchRequest) -> String {
-        let mut url = format!("{}/search?q={}&format=json", self.base_url, urlencoding(&request.query));
+        let mut url = format!(
+            "{}/search?q={}&format=json",
+            self.base_url,
+            urlencoding(&request.query)
+        );
 
         if let Some(ref lang) = request.language {
             url.push_str(&format!("&language={}", urlencoding(lang)));
@@ -250,20 +254,15 @@ impl Provider for SearxngProvider {
 
         let url = self.build_search_url(request);
 
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    ProviderError::Timeout {
-                        elapsed_secs: start.elapsed().as_secs(),
-                    }
-                } else {
-                    ProviderError::Internal("SearXNG HTTP request failed".to_string())
+        let response = self.client.get(&url).send().await.map_err(|e| {
+            if e.is_timeout() {
+                ProviderError::Timeout {
+                    elapsed_secs: start.elapsed().as_secs(),
                 }
-            })?;
+            } else {
+                ProviderError::Internal("SearXNG HTTP request failed".to_string())
+            }
+        })?;
 
         let status = response.status();
 
@@ -276,7 +275,7 @@ impl Provider for SearxngProvider {
         if !status.is_success() {
             return Err(ProviderError::HttpError {
                 status: status.as_u16(),
-                body: format!("{}", status.canonical_reason().unwrap_or("Unknown")),
+                body: status.canonical_reason().unwrap_or("Unknown").to_string(),
             });
         }
 
@@ -347,11 +346,17 @@ mod tests {
 
         // Second result: Wikipedia
         assert_eq!(results[1].title, "Rust (programming language) - Wikipedia");
-        assert_eq!(results[1].url, "https://en.wikipedia.org/wiki/Rust_(programming_language)");
+        assert_eq!(
+            results[1].url,
+            "https://en.wikipedia.org/wiki/Rust_(programming_language)"
+        );
         assert!(results[1].snippet.contains("general-purpose"));
 
         // Third result: Rust Book
-        assert_eq!(results[2].title, "The Rust Programming Language - The Rust Programming Language");
+        assert_eq!(
+            results[2].title,
+            "The Rust Programming Language - The Rust Programming Language"
+        );
         assert_eq!(results[2].url, "https://doc.rust-lang.org/book/");
         assert!(results[2].snippet.contains("Steve Klabnik"));
 
@@ -663,18 +668,14 @@ mod tests {
             .block_on(provider.build_client(&config))
             .expect("build_client should succeed");
 
-        assert!(client
-            .get("http://example.com")
-            .build()
-            .is_ok());
+        assert!(client.get("http://example.com").build().is_ok());
     }
 
     /// SearXNG fixture response total_found matches result count.
     #[test]
     fn fixture_response_has_correct_result_count() {
         let json = include_str!("../../../tests/fixtures/searxng/search.json");
-        let response: SearxngResponse =
-            serde_json::from_str(json).expect("parse fixture");
+        let response: SearxngResponse = serde_json::from_str(json).expect("parse fixture");
         assert_eq!(response.number_of_results, 3);
         assert_eq!(response.query, "rust programming language");
         assert_eq!(response.results.len(), 3);

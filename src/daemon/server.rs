@@ -227,7 +227,10 @@ async fn write_response<W: AsyncWrite + Unpin>(
     response: &Response,
 ) -> std::io::Result<()> {
     let mut json = serde_json::to_string(response).map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, format!("serialization error: {}", e))
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("serialization error: {}", e),
+        )
     })?;
     json.push('\n');
     writer.write_all(json.as_bytes()).await?;
@@ -248,7 +251,9 @@ mod tests {
 
     /// Helper: spawn a daemon-side handler on a socket pair and return the
     /// client-side stream.
-    async fn spawn_handler(config: Arc<Config>) -> (UnixStream, tokio::task::JoinHandle<anyhow::Result<()>>) {
+    async fn spawn_handler(
+        config: Arc<Config>,
+    ) -> (UnixStream, tokio::task::JoinHandle<anyhow::Result<()>>) {
         let (server, client) = UnixStream::pair().expect("create socket pair");
         let config_clone = Arc::clone(&config);
         let handle = tokio::spawn(async move { handle_connection(server, config_clone).await });
@@ -351,7 +356,10 @@ mod tests {
         // Drop the client immediately, signaling EOF.
         drop(client);
 
-        let result = handle.await.expect("handler task panicked").expect("handle_connection failed");
+        let result = handle
+            .await
+            .expect("handler task panicked")
+            .expect("handle_connection failed");
         // handle_connection should return Ok on clean EOF
         assert!(matches!(result, ()));
     }
@@ -383,7 +391,10 @@ mod tests {
         let config = Arc::new(Config::default());
         let (mut client, _handle) = spawn_handler(config).await;
 
-        client.write_all(b"{\"type\":\"Shutdown\"}\n").await.unwrap();
+        client
+            .write_all(b"{\"type\":\"Shutdown\"}\n")
+            .await
+            .unwrap();
 
         let mut reader = BufReader::new(&mut client);
         let mut response_line = String::new();

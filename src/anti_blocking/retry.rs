@@ -126,10 +126,7 @@ impl ClassifyRetry for ProviderError {
 ///     &config,
 /// ).await;
 /// ```
-pub async fn retry_with_backoff<F, Fut, T, E>(
-    mut f: F,
-    config: &RetryConfig,
-) -> Result<T, E>
+pub async fn retry_with_backoff<F, Fut, T, E>(mut f: F, config: &RetryConfig) -> Result<T, E>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T, E>>,
@@ -156,8 +153,8 @@ where
 
                 // Compute backoff: cap * 2^attempt, capped at cap_secs.
                 let shift = 1u64.checked_shl(attempt).unwrap_or(u64::MAX);
-                let computed = (config.base_delay_secs as f64 * shift as f64)
-                    .min(config.cap_secs as f64);
+                let computed =
+                    (config.base_delay_secs as f64 * shift as f64).min(config.cap_secs as f64);
 
                 // Full jitter: random in [0, computed].
                 let jittered = rand::thread_rng().gen::<f64>() * computed;
@@ -228,11 +225,7 @@ mod tests {
     async fn success_on_first_attempt() {
         let config = RetryConfig::new(1, 3, 60);
 
-        let result = retry_with_backoff(
-            || async { Ok::<i32, TestError>(42) },
-            &config,
-        )
-        .await;
+        let result = retry_with_backoff(|| async { Ok::<i32, TestError>(42) }, &config).await;
 
         assert_eq!(result, Ok(42));
     }
@@ -349,10 +342,6 @@ mod tests {
     #[should_panic(expected = "max_attempts")]
     async fn max_attempts_zero_panics() {
         let config = RetryConfig::new(1, 0, 60);
-        let _ = retry_with_backoff(
-            || async { Ok::<(), TestError>(()) },
-            &config,
-        )
-        .await;
+        let _ = retry_with_backoff(|| async { Ok::<(), TestError>(()) }, &config).await;
     }
 }

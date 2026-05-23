@@ -135,12 +135,10 @@ impl DuckDuckGoProvider {
     /// appears to be legitimate search results.
     fn detect_captcha(body: &str) -> Option<&'static str> {
         let body_lower = body.to_lowercase();
-        for &marker in CAPTCHA_MARKERS {
-            if body_lower.contains(&marker.to_lowercase()) {
-                return Some(marker);
-            }
-        }
-        None
+        CAPTCHA_MARKERS
+            .iter()
+            .find(|&&marker| body_lower.contains(&marker.to_lowercase()))
+            .copied()
     }
 
     /// Parse DuckDuckGo HTML into canonical [`SearchResult`] entries.
@@ -151,16 +149,28 @@ impl DuckDuckGoProvider {
         let document = Html::parse_document(html);
 
         let result_sel = Selector::parse(SEL_RESULT_CONTAINER).map_err(|e| {
-            ProviderError::ParseError(format!("invalid result selector '{}': {:?}", SEL_RESULT_CONTAINER, e))
+            ProviderError::ParseError(format!(
+                "invalid result selector '{}': {:?}",
+                SEL_RESULT_CONTAINER, e
+            ))
         })?;
         let title_sel = Selector::parse(SEL_RESULT_TITLE).map_err(|e| {
-            ProviderError::ParseError(format!("invalid title selector '{}': {:?}", SEL_RESULT_TITLE, e))
+            ProviderError::ParseError(format!(
+                "invalid title selector '{}': {:?}",
+                SEL_RESULT_TITLE, e
+            ))
         })?;
         let url_sel = Selector::parse(SEL_RESULT_URL).map_err(|e| {
-            ProviderError::ParseError(format!("invalid url selector '{}': {:?}", SEL_RESULT_URL, e))
+            ProviderError::ParseError(format!(
+                "invalid url selector '{}': {:?}",
+                SEL_RESULT_URL, e
+            ))
         })?;
         let snippet_sel = Selector::parse(SEL_RESULT_SNIPPET).map_err(|e| {
-            ProviderError::ParseError(format!("invalid snippet selector '{}': {:?}", SEL_RESULT_SNIPPET, e))
+            ProviderError::ParseError(format!(
+                "invalid snippet selector '{}': {:?}",
+                SEL_RESULT_SNIPPET, e
+            ))
         })?;
 
         let mut results = Vec::new();
@@ -272,13 +282,14 @@ impl Provider for DuckDuckGoProvider {
         if !status.is_success() {
             return Err(ProviderError::HttpError {
                 status: status.as_u16(),
-                body: format!("{}", status.canonical_reason().unwrap_or("Unknown")),
+                body: status.canonical_reason().unwrap_or("Unknown").to_string(),
             });
         }
 
-        let body = response.text().await.map_err(|e| {
-            ProviderError::Internal(format!("failed to read response body: {}", e))
-        })?;
+        let body = response
+            .text()
+            .await
+            .map_err(|e| ProviderError::Internal(format!("failed to read response body: {}", e)))?;
 
         // Detect CAPTCHA before attempting to parse.
         if let Some(_marker) = Self::detect_captcha(&body) {
@@ -347,11 +358,17 @@ mod tests {
 
         // Second result: Wikipedia
         assert_eq!(results[1].title, "Rust (programming language) - Wikipedia");
-        assert_eq!(results[1].url, "https://en.wikipedia.org/wiki/Rust_(programming_language)");
+        assert_eq!(
+            results[1].url,
+            "https://en.wikipedia.org/wiki/Rust_(programming_language)"
+        );
         assert!(results[1].snippet.contains("general-purpose"));
 
         // Third result: Rust Book
-        assert_eq!(results[2].title, "The Rust Programming Language - The Rust Programming Language");
+        assert_eq!(
+            results[2].title,
+            "The Rust Programming Language - The Rust Programming Language"
+        );
         assert_eq!(results[2].url, "https://doc.rust-lang.org/book/");
         assert!(results[2].snippet.contains("Steve Klabnik"));
 
@@ -371,7 +388,8 @@ mod tests {
     /// Verify CAPTCHA detection fires on a body containing a known marker.
     #[test]
     fn detect_captcha_returns_marker_when_present() {
-        let body = "<html><body><div class=\"g-recaptcha\" data-sitekey=\"abc123\"></div></body></html>";
+        let body =
+            "<html><body><div class=\"g-recaptcha\" data-sitekey=\"abc123\"></div></body></html>";
         assert!(DuckDuckGoProvider::detect_captcha(body).is_some());
 
         // Cloudflare challenge detection
@@ -435,8 +453,8 @@ mod tests {
             timeout_secs: Some(10),
         };
         let limiter = Arc::new(RateLimiter::new());
-        let provider =
-            DuckDuckGoProvider::new(&config, limiter, DEFAULT_DDG_RPM, true).expect("build provider");
+        let provider = DuckDuckGoProvider::new(&config, limiter, DEFAULT_DDG_RPM, true)
+            .expect("build provider");
 
         assert_eq!(provider.name(), "duckduckgo");
     }
@@ -453,8 +471,8 @@ mod tests {
         };
         let limiter = Arc::new(RateLimiter::new());
 
-        let enabled =
-            DuckDuckGoProvider::new(&config, limiter.clone(), DEFAULT_DDG_RPM, true).expect("build");
+        let enabled = DuckDuckGoProvider::new(&config, limiter.clone(), DEFAULT_DDG_RPM, true)
+            .expect("build");
         assert!(enabled.is_available());
 
         let disabled =
@@ -503,9 +521,6 @@ mod tests {
 
         // The client should be usable — the simplest check is that it is not
         // obviously broken (build_client didn't error).
-        assert!(client
-            .get("http://example.com")
-            .build()
-            .is_ok());
+        assert!(client.get("http://example.com").build().is_ok());
     }
 }

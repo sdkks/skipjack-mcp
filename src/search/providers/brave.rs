@@ -253,7 +253,7 @@ impl Provider for BraveProvider {
         let mut params: Vec<(&str, String)> = vec![("q", request.query.clone())];
 
         // Limit: cap at 20 (Brave API max per page).
-        let count = request.limit.min(20).max(1);
+        let count = request.limit.clamp(1, 20);
         params.push(("count", count.to_string()));
 
         // Safe search passthrough.
@@ -274,10 +274,7 @@ impl Provider for BraveProvider {
 
         // Optional freshness filter.
         if let Some(ref freshness) = request.freshness {
-            params.push((
-                "freshness",
-                Self::freshness_param(freshness).to_string(),
-            ));
+            params.push(("freshness", Self::freshness_param(freshness).to_string()));
         }
 
         let response = self
@@ -301,9 +298,7 @@ impl Provider for BraveProvider {
         let status = response.status();
 
         // HTTP 401 (Unauthorized) or 403 (Forbidden) — terminal error, no retry.
-        if status == reqwest::StatusCode::UNAUTHORIZED
-            || status == reqwest::StatusCode::FORBIDDEN
-        {
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(ProviderError::AccessDenied);
         }
 
@@ -320,13 +315,14 @@ impl Provider for BraveProvider {
         if !status.is_success() {
             return Err(ProviderError::HttpError {
                 status: status.as_u16(),
-                body: format!("{}", status.canonical_reason().unwrap_or("Unknown")),
+                body: status.canonical_reason().unwrap_or("Unknown").to_string(),
             });
         }
 
-        let body = response.text().await.map_err(|e| {
-            ProviderError::Internal(format!("failed to read response body: {}", e))
-        })?;
+        let body = response
+            .text()
+            .await
+            .map_err(|e| ProviderError::Internal(format!("failed to read response body: {}", e)))?;
 
         let results = Self::parse_results(&body)?;
         let total_found = results.len();
@@ -561,9 +557,13 @@ mod tests {
         };
         let limiter = Arc::new(RateLimiter::new());
 
-        let with_key =
-            BraveProvider::new(&config, limiter.clone(), DEFAULT_BRAVE_RPM, Some("key".into()))
-                .expect("build");
+        let with_key = BraveProvider::new(
+            &config,
+            limiter.clone(),
+            DEFAULT_BRAVE_RPM,
+            Some("key".into()),
+        )
+        .expect("build");
         assert!(with_key.is_available());
 
         let without_key =
@@ -582,9 +582,8 @@ mod tests {
             timeout_secs: Some(10),
         };
         let limiter = Arc::new(RateLimiter::new());
-        let provider =
-            BraveProvider::new(&config, limiter, DEFAULT_BRAVE_RPM, Some("key".into()))
-                .expect("build");
+        let provider = BraveProvider::new(&config, limiter, DEFAULT_BRAVE_RPM, Some("key".into()))
+            .expect("build");
 
         let tags = provider.tags();
         assert_eq!(tags.len(), 1);
@@ -602,9 +601,8 @@ mod tests {
             timeout_secs: Some(10),
         };
         let limiter = Arc::new(RateLimiter::new());
-        let provider =
-            BraveProvider::new(&config, limiter, DEFAULT_BRAVE_RPM, Some("key".into()))
-                .expect("build");
+        let provider = BraveProvider::new(&config, limiter, DEFAULT_BRAVE_RPM, Some("key".into()))
+            .expect("build");
 
         assert!(!provider.description().is_empty());
         assert!(provider.description().contains("Brave"));
@@ -621,9 +619,8 @@ mod tests {
             timeout_secs: Some(10),
         };
         let limiter = Arc::new(RateLimiter::new());
-        let provider =
-            BraveProvider::new(&config, limiter, DEFAULT_BRAVE_RPM, Some("key".into()))
-                .expect("build");
+        let provider = BraveProvider::new(&config, limiter, DEFAULT_BRAVE_RPM, Some("key".into()))
+            .expect("build");
 
         let rt = tokio::runtime::Runtime::new().expect("create runtime");
         let client = rt

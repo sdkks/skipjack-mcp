@@ -21,7 +21,7 @@ async fn main() {
     let config_path = extract_config_arg(&args);
 
     // Check for --daemon as the first positional arg only (not anywhere in argv).
-    if args.get(1).map_or(false, |a| a == "--daemon") {
+    if args.get(1).is_some_and(|a| a == "--daemon") {
         // Daemon mode (FR-1.1).
         eprintln!(
             "metasearchd {} ({}) starting daemon...",

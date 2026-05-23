@@ -18,6 +18,7 @@ use crate::search::{SearchRequest, SearchResponse, SearchResult, Tag};
 const JINA_DEFAULT_BASE_URL: &str = "https://s.jina.ai";
 
 /// Default requests-per-minute rate limit for Jina AI (free tier: 100 RPM).
+#[allow(dead_code)]
 const DEFAULT_JINA_RPM: u32 = 100;
 
 // ---------------------------------------------------------------------------
@@ -148,23 +149,16 @@ impl JinaProvider {
         let timeout_secs = client_config.timeout_secs.unwrap_or(30);
         let base_url = base_url.unwrap_or_else(|| JINA_DEFAULT_BASE_URL.to_string());
 
-        let available = match api_key.as_deref() {
-            Some(key) if !key.is_empty() => true,
-            _ => false,
-        };
+        let available = matches!(api_key.as_deref(), Some(key) if !key.is_empty());
         let api_key = api_key.unwrap_or_default();
 
         let mut default_headers = HeaderMap::new();
         if available {
             let auth_value = format!("Bearer {}", api_key);
-            let auth_header = HeaderValue::from_str(&auth_value).map_err(|e| {
-                ProviderError::Internal(format!("invalid API key: {}", e))
-            })?;
+            let auth_header = HeaderValue::from_str(&auth_value)
+                .map_err(|e| ProviderError::Internal(format!("invalid API key: {}", e)))?;
             default_headers.insert(AUTHORIZATION, auth_header);
-            default_headers.insert(
-                CONTENT_TYPE,
-                HeaderValue::from_static("application/json"),
-            );
+            default_headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         }
 
         let mut builder = Client::builder()
@@ -213,10 +207,7 @@ impl JinaProvider {
         if response.code != 200 {
             return Err(ProviderError::HttpError {
                 status: response.code,
-                body: format!(
-                    "Jina API returned non-200 code: {}",
-                    response.code
-                ),
+                body: format!("Jina API returned non-200 code: {}", response.code),
             });
         }
 
@@ -307,9 +298,7 @@ impl Provider for JinaProvider {
         let status = response.status();
 
         // HTTP 401/403: terminal error, no retry.
-        if status == reqwest::StatusCode::UNAUTHORIZED
-            || status == reqwest::StatusCode::FORBIDDEN
-        {
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(ProviderError::AccessDenied);
         }
 
@@ -326,13 +315,14 @@ impl Provider for JinaProvider {
         if !status.is_success() {
             return Err(ProviderError::HttpError {
                 status: status.as_u16(),
-                body: format!("{}", status.canonical_reason().unwrap_or("Unknown")),
+                body: status.canonical_reason().unwrap_or("Unknown").to_string(),
             });
         }
 
-        let body = response.text().await.map_err(|e| {
-            ProviderError::Internal(format!("failed to read response body: {}", e))
-        })?;
+        let body = response
+            .text()
+            .await
+            .map_err(|e| ProviderError::Internal(format!("failed to read response body: {}", e)))?;
 
         let results = Self::parse_results(&body)?;
         let total_found = results.len();
@@ -355,14 +345,10 @@ impl Provider for JinaProvider {
         let mut default_headers = HeaderMap::new();
         if !self.api_key.is_empty() {
             let auth_value = format!("Bearer {}", self.api_key);
-            let auth_header = HeaderValue::from_str(&auth_value).map_err(|e| {
-                ProviderError::Internal(format!("invalid API key: {}", e))
-            })?;
+            let auth_header = HeaderValue::from_str(&auth_value)
+                .map_err(|e| ProviderError::Internal(format!("invalid API key: {}", e)))?;
             default_headers.insert(AUTHORIZATION, auth_header);
-            default_headers.insert(
-                CONTENT_TYPE,
-                HeaderValue::from_static("application/json"),
-            );
+            default_headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         }
 
         let mut builder = Client::builder()
@@ -409,19 +395,13 @@ mod tests {
         assert!(results[0].published_date.is_none());
 
         // Second result: Wikipedia (has published_date)
-        assert_eq!(
-            results[1].title,
-            "Rust (programming language) - Wikipedia"
-        );
+        assert_eq!(results[1].title, "Rust (programming language) - Wikipedia");
         assert_eq!(
             results[1].url,
             "https://en.wikipedia.org/wiki/Rust_(programming_language)"
         );
         assert!(results[1].snippet.contains("general-purpose"));
-        assert_eq!(
-            results[1].published_date.as_deref(),
-            Some("2024-03-15")
-        );
+        assert_eq!(results[1].published_date.as_deref(), Some("2024-03-15"));
 
         // Third result: Rust Book
         assert_eq!(
@@ -430,10 +410,7 @@ mod tests {
         );
         assert_eq!(results[2].url, "https://doc.rust-lang.org/book/");
         assert!(results[2].snippet.contains("Steve Klabnik"));
-        assert_eq!(
-            results[2].published_date.as_deref(),
-            Some("2023-12-01")
-        );
+        assert_eq!(results[2].published_date.as_deref(), Some("2023-12-01"));
 
         // All results should have the correct provider name.
         for result in &results {
@@ -451,8 +428,7 @@ mod tests {
     #[test]
     fn parse_results_empty_data_yields_empty_vec() {
         let json = r#"{"code": 200, "data": {"results": []}}"#;
-        let results =
-            JinaProvider::parse_results(json).expect("parse empty results");
+        let results = JinaProvider::parse_results(json).expect("parse empty results");
         assert!(results.is_empty());
     }
 
@@ -573,14 +549,8 @@ mod tests {
         };
         let limiter = Arc::new(RateLimiter::new());
 
-        let without_key = JinaProvider::new(
-            &config,
-            limiter,
-            DEFAULT_JINA_RPM,
-            None,
-            None,
-        )
-        .expect("build");
+        let without_key =
+            JinaProvider::new(&config, limiter, DEFAULT_JINA_RPM, None, None).expect("build");
         assert!(!without_key.is_available());
     }
 

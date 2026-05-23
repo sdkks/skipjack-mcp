@@ -26,8 +26,8 @@ use tracing;
 use crate::anti_blocking::{retry_with_backoff, RateLimiter, RetryConfig};
 use crate::cache::{cache_key, provider_list_string, Cache};
 use crate::config::{Config, ProviderConfig as CfgProviderConfig, RankingConfig};
-use crate::search::provider::{Provider, ProviderClientConfig, ProviderError, Tag};
 use crate::search::merge::ResultMerger;
+use crate::search::provider::{Provider, ProviderClientConfig, ProviderError, Tag};
 use crate::search::{SearchRequest, SearchResponse};
 
 // ---------------------------------------------------------------------------
@@ -160,11 +160,7 @@ impl HealthState {
         let cutoff = Instant::now()
             .checked_sub(self.window_duration)
             .unwrap_or(Instant::now());
-        let in_window: Vec<_> = self
-            .events
-            .iter()
-            .filter(|(t, _)| *t >= cutoff)
-            .collect();
+        let in_window: Vec<_> = self.events.iter().filter(|(t, _)| *t >= cutoff).collect();
         let total = in_window.len();
         if total == 0 {
             return 1.0;
@@ -186,7 +182,7 @@ impl HealthState {
         let cutoff = Instant::now()
             .checked_sub(self.window_duration)
             .unwrap_or(Instant::now());
-        while self.events.front().map_or(false, |(t, _)| *t < cutoff) {
+        while self.events.front().is_some_and(|(t, _)| *t < cutoff) {
             self.events.pop_front();
         }
     }
@@ -276,7 +272,6 @@ impl ProviderCatalog {
         self.providers.is_empty()
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Manager
@@ -368,11 +363,18 @@ impl Manager {
 
             let rpm = provider_cfg.rate_limit_rpm.unwrap_or(30);
             provider_rpm.insert(provider_cfg.name.clone(), rpm);
-            provider_weights.insert(provider_cfg.name.clone(), provider_cfg.weight.unwrap_or(1.0));
+            provider_weights.insert(
+                provider_cfg.name.clone(),
+                provider_cfg.weight.unwrap_or(1.0),
+            );
 
-            let provider = Self::create_provider(provider_cfg, &client_config, rate_limiter.clone(), rpm)?;
+            let provider =
+                Self::create_provider(provider_cfg, &client_config, rate_limiter.clone(), rpm)?;
 
-            health_states.insert(provider.name().to_string(), HealthState::new(consecutive_failure_threshold));
+            health_states.insert(
+                provider.name().to_string(),
+                HealthState::new(consecutive_failure_threshold),
+            );
             catalog.register(provider);
         }
 
@@ -429,10 +431,7 @@ impl Manager {
     /// Dispatches based on `request.dispatch_mode` (falling back to config default)
     /// to either [`search_concurrent`](Manager::search_concurrent) or
     /// [`search_tiered`](Manager::search_tiered).
-    pub async fn search(
-        &self,
-        request: &SearchRequest,
-    ) -> Result<SearchResponse, ProviderError> {
+    pub async fn search(&self, request: &SearchRequest) -> Result<SearchResponse, ProviderError> {
         let start = Instant::now();
 
         let mode = request
@@ -529,7 +528,11 @@ impl Manager {
         }
 
         // Check combined cache.
-        let combo_cache_key = cache_key(&request.query, &providers_to_dispatch, request.freshness.as_ref());
+        let combo_cache_key = cache_key(
+            &request.query,
+            &providers_to_dispatch,
+            request.freshness.as_ref(),
+        );
         if let Ok(Some(cached)) = self.cache.get(&combo_cache_key) {
             tracing::debug!(
                 request_id = %request.request_id,
@@ -544,11 +547,7 @@ impl Manager {
 
         for provider_name in &providers_to_dispatch {
             let name = provider_name.clone();
-            let rpm = self
-                .provider_rpm
-                .get(&name)
-                .copied()
-                .unwrap_or(30);
+            let rpm = self.provider_rpm.get(&name).copied().unwrap_or(30);
             let rate_limiter = Arc::clone(&self.rate_limiter);
             let retry_config = self.retry_config.clone();
             let cache = Arc::clone(&self.cache);
@@ -615,25 +614,23 @@ impl Manager {
             }
 
             match tokio::time::timeout(remaining, join_set.join_next()).await {
-                Ok(Some(Ok((provider_name, result)))) => {
-                    match result {
-                        Ok(response) => {
-                            tracing::debug!(
-                                provider = %provider_name,
-                                results = response.results.len(),
-                                "provider returned results"
-                            );
-                            responses.push(response);
-                        }
-                        Err(err) => {
-                            tracing::warn!(
-                                provider = %provider_name,
-                                error = %err,
-                                "provider error, skipping"
-                            );
-                        }
+                Ok(Some(Ok((provider_name, result)))) => match result {
+                    Ok(response) => {
+                        tracing::debug!(
+                            provider = %provider_name,
+                            results = response.results.len(),
+                            "provider returned results"
+                        );
+                        responses.push(response);
                     }
-                }
+                    Err(err) => {
+                        tracing::warn!(
+                            provider = %provider_name,
+                            error = %err,
+                            "provider error, skipping"
+                        );
+                    }
+                },
                 Ok(Some(Err(join_err))) => {
                     tracing::warn!(error = %join_err, "provider task panicked");
                 }
@@ -705,7 +702,12 @@ impl Manager {
             .catalog
             .enabled_providers(Some(&provider_names), None)
             .into_iter()
-            .filter(|p| health_lock.get(p.name()).map(|h| h.is_healthy()).unwrap_or(true))
+            .filter(|p| {
+                health_lock
+                    .get(p.name())
+                    .map(|h| h.is_healthy())
+                    .unwrap_or(true)
+            })
             .map(|p| p.name().to_string())
             .collect();
         drop(health_lock);
@@ -776,11 +778,7 @@ impl Manager {
 
             for provider_name in chunk {
                 let name = provider_name.clone();
-                let rpm = self
-                    .provider_rpm
-                    .get(name.as_str())
-                    .copied()
-                    .unwrap_or(30);
+                let rpm = self.provider_rpm.get(name.as_str()).copied().unwrap_or(30);
                 let rate_limiter = Arc::clone(&self.rate_limiter);
                 let retry_config = self.retry_config.clone();
                 let cache = Arc::clone(&self.cache);
@@ -879,6 +877,7 @@ impl Manager {
     /// catalog. The caller (a spawned task) looks up the provider by name from
     /// an `Arc<ProviderCatalog>` clone, ensuring the reference is valid for the
     /// task's lifetime.
+    #[allow(clippy::too_many_arguments)]
     async fn execute_provider_pipeline(
         provider: &dyn Provider,
         provider_name: &str,
@@ -920,7 +919,7 @@ impl Manager {
                     // Call the provider's actual search method.
                     let resp = provider.search(&req).await?;
                     // 4. Cache set on success.
-                    let provider_list = provider_list_string(&[nm.clone()]);
+                    let provider_list = provider_list_string(std::slice::from_ref(&nm));
                     if let Err(e) = cache_ref.set(&key, &q, &provider_list, &resp, ttl) {
                         tracing::warn!(error = %e, provider = %nm, "failed to write per-provider cache entry");
                     }
@@ -1312,11 +1311,7 @@ mod tests {
             request_timeout_secs: 10,
             dispatch_mode: "concurrent".into(),
             default_limit: 10,
-            provider_rpm: [
-                ("fast-a".into(), 100),
-                ("fast-b".into(), 100),
-            ]
-            .into(),
+            provider_rpm: [("fast-a".into(), 100), ("fast-b".into(), 100)].into(),
             cache_ttl_secs: 3600,
             ranking: RankingConfig::default(),
             provider_weights: HashMap::new(),
@@ -1476,9 +1471,9 @@ mod tests {
         for _ in 0..5 {
             let mgr = Arc::clone(&manager);
             let req = test_request("same query");
-            handles.push(tokio::spawn(async move {
-                mgr.search_concurrent(&req).await
-            }));
+            handles.push(tokio::spawn(
+                async move { mgr.search_concurrent(&req).await },
+            ));
         }
 
         // All should complete without hanging.
@@ -1673,7 +1668,10 @@ mod tests {
         request.limit = 3;
         request.dispatch_mode = Some("tiered".into());
 
-        let response = manager.search_tiered(&request).await.expect("tiered dispatch succeeds");
+        let response = manager
+            .search_tiered(&request)
+            .await
+            .expect("tiered dispatch succeeds");
 
         // tier-a (Web, priority 0) produces 3 results, meeting the limit of 3.
         // tier-b (News, priority 1) should be skipped by early-stop.

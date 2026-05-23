@@ -60,10 +60,7 @@ pub trait IpRotationStrategy: Send + Sync {
     ///
     /// The default implementation calls `next_bind_addr()` and applies it via
     /// `builder.local_address()`.
-    fn configure_client(
-        &mut self,
-        mut builder: reqwest::ClientBuilder,
-    ) -> reqwest::ClientBuilder {
+    fn configure_client(&mut self, mut builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
         if let Some(addr) = self.next_bind_addr() {
             builder = builder.local_address(addr);
         }
@@ -88,10 +85,7 @@ impl IpRotationStrategy for StaticIpStrategy {
         None
     }
 
-    fn configure_client(
-        &mut self,
-        builder: reqwest::ClientBuilder,
-    ) -> reqwest::ClientBuilder {
+    fn configure_client(&mut self, builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
         builder
     }
 }
@@ -206,10 +200,7 @@ impl IpRotationStrategy for Ipv6PoolStrategy {
         Some(IpAddr::V6(addr))
     }
 
-    fn configure_client(
-        &mut self,
-        builder: reqwest::ClientBuilder,
-    ) -> reqwest::ClientBuilder {
+    fn configure_client(&mut self, builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
         if let Some(addr) = self.next_bind_addr() {
             builder.local_address(addr)
         } else {
@@ -251,7 +242,10 @@ impl ProxyPoolStrategy {
     ///
     /// Panics if `proxies` is empty.
     pub fn new(proxies: Vec<String>) -> Self {
-        assert!(!proxies.is_empty(), "proxy pool must contain at least one URL");
+        assert!(
+            !proxies.is_empty(),
+            "proxy pool must contain at least one URL"
+        );
         ProxyPoolStrategy {
             proxies,
             cursor: AtomicU32::new(0),
@@ -264,10 +258,7 @@ impl IpRotationStrategy for ProxyPoolStrategy {
         None
     }
 
-    fn configure_client(
-        &mut self,
-        mut builder: reqwest::ClientBuilder,
-    ) -> reqwest::ClientBuilder {
+    fn configure_client(&mut self, mut builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
         let idx = self.cursor.fetch_add(1, Ordering::Relaxed) % self.proxies.len() as u32;
         let proxy_url = &self.proxies[idx as usize];
 
@@ -380,15 +371,14 @@ mod tests {
 
     #[test]
     fn ipv6_pool_valid_cidr() {
-        let strategy =
-            Ipv6PoolStrategy::new("2001:db8::/120").expect("valid CIDR should parse");
+        let strategy = Ipv6PoolStrategy::new("2001:db8::/120").expect("valid CIDR should parse");
         assert!(strategy.pool_size > 0);
     }
 
     #[test]
     fn ipv6_pool_cidr_too_short_prefix() {
-        let err = Ipv6PoolStrategy::new("2001:db8::/48")
-            .expect_err("short prefix should be rejected");
+        let err =
+            Ipv6PoolStrategy::new("2001:db8::/48").expect_err("short prefix should be rejected");
         assert!(
             err.contains("too large"),
             "expected 'too large' error, got: {}",
@@ -398,16 +388,13 @@ mod tests {
 
     #[test]
     fn ipv6_pool_round_robin_iterates_different_addresses() {
-        let mut strategy =
-            Ipv6PoolStrategy::new("2001:db8::/120").expect("valid CIDR");
+        let mut strategy = Ipv6PoolStrategy::new("2001:db8::/120").expect("valid CIDR");
 
         // The /120 subnet has 256 addresses, 254 usable.
         // Collect several addresses and verify they are distinct.
         let mut seen: HashSet<IpAddr> = HashSet::new();
         for _ in 0..20 {
-            let addr = strategy
-                .next_bind_addr()
-                .expect("should produce addresses");
+            let addr = strategy.next_bind_addr().expect("should produce addresses");
             seen.insert(addr);
         }
 
@@ -421,8 +408,7 @@ mod tests {
 
     #[test]
     fn ipv6_pool_wraps_around() {
-        let mut strategy =
-            Ipv6PoolStrategy::new("2001:db8::/120").expect("valid CIDR");
+        let mut strategy = Ipv6PoolStrategy::new("2001:db8::/120").expect("valid CIDR");
 
         // /120 => pool_size = 254
         // Read all 254 addresses to wrap the cursor.
@@ -443,11 +429,15 @@ mod tests {
     #[test]
     fn ipv6_pool_first_host_is_network_plus_one() {
         // For 2001:db8::/120, the network is 2001:db8::, first usable is ::1
-        let mut strategy =
-            Ipv6PoolStrategy::new("2001:db8::/120").expect("valid CIDR");
+        let mut strategy = Ipv6PoolStrategy::new("2001:db8::/120").expect("valid CIDR");
 
         let first = strategy.next_bind_addr().expect("should have addresses");
-        assert_eq!(first, IpAddr::V6(Ipv6Addr::from(0x2001_0db8_0000_0000_0000_0000_0000_0001u128)));
+        assert_eq!(
+            first,
+            IpAddr::V6(Ipv6Addr::from(
+                0x2001_0db8_0000_0000_0000_0000_0000_0001u128
+            ))
+        );
     }
 
     #[test]
@@ -479,8 +469,7 @@ mod tests {
         // cycles correctly across calls.
         let indices: Vec<u32> = (0..6)
             .map(|_| {
-                let idx =
-                    strategy.cursor.fetch_add(1, Ordering::Relaxed);
+                let idx = strategy.cursor.fetch_add(1, Ordering::Relaxed);
                 // Simulate the actual modulo logic
                 idx % proxies.len() as u32
             })
@@ -512,12 +501,8 @@ mod tests {
 
     #[test]
     fn factory_ipv6_pool_strategy() {
-        let strategy = build_ip_rotation_strategy(
-            "ipv6_pool",
-            Some("fd12:3456:789a::/64"),
-            None,
-        )
-        .expect("ipv6_pool should build with valid subnet");
+        let strategy = build_ip_rotation_strategy("ipv6_pool", Some("fd12:3456:789a::/64"), None)
+            .expect("ipv6_pool should build with valid subnet");
 
         // A /64 subnet is large but we capped at u32::MAX
         // Just verify it compiles and runs.
@@ -538,12 +523,8 @@ mod tests {
     #[test]
     fn factory_proxy_pool_strategy() {
         let proxies = vec!["socks5://proxy1:1080".to_string()];
-        let strategy = build_ip_rotation_strategy(
-            "proxy_pool",
-            None,
-            Some(&proxies),
-        )
-        .expect("proxy_pool should build with valid proxies");
+        let strategy = build_ip_rotation_strategy("proxy_pool", None, Some(&proxies))
+            .expect("proxy_pool should build with valid proxies");
         let mut dummy = strategy;
         assert_eq!(dummy.next_bind_addr(), None);
     }
@@ -590,8 +571,7 @@ mod tests {
     fn reqwest_client_with_proxy_builds() {
         // Use an obviously non-existent proxy; we are testing construction,
         // not connectivity.
-        let proxy = reqwest::Proxy::all("http://127.0.0.1:1")
-            .expect("proxy URL should parse");
+        let proxy = reqwest::Proxy::all("http://127.0.0.1:1").expect("proxy URL should parse");
         let client = reqwest::Client::builder()
             .proxy(proxy)
             .build()

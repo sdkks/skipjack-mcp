@@ -71,7 +71,11 @@ mod tests {
     fn pool_entries_are_non_empty() {
         for ua in ua_pool() {
             assert!(!ua.is_empty(), "found empty user-agent string in pool");
-            assert!(ua.contains("Mozilla"), "UA string does not contain 'Mozilla': {}", ua);
+            assert!(
+                ua.contains("Mozilla"),
+                "UA string does not contain 'Mozilla': {}",
+                ua
+            );
         }
     }
 

@@ -88,8 +88,9 @@ impl Cache {
     fn try_open(db_path: &str) -> Result<Cache> {
         // Ensure the parent directory exists.
         if let Some(parent) = Path::new(db_path).parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create cache directory: {}", parent.display()))?;
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create cache directory: {}", parent.display())
+            })?;
         }
 
         let conn = rusqlite::Connection::open(db_path)
@@ -141,8 +142,8 @@ impl Cache {
     pub fn get(&self, key: &str) -> Result<Option<SearchResponse>> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
 
-        let mut stmt = conn
-            .prepare("SELECT response_json, created_at, ttl_secs FROM cache WHERE key = ?1")?;
+        let mut stmt =
+            conn.prepare("SELECT response_json, created_at, ttl_secs FROM cache WHERE key = ?1")?;
 
         let row: Option<(String, i64, u64)> = stmt
             .query_row(params![key], |row| {
@@ -169,7 +170,9 @@ impl Cache {
                 }
 
                 let mut response: SearchResponse = serde_json::from_str(&response_json)
-                    .with_context(|| format!("Failed to deserialize cached response for key '{}'", key))?;
+                    .with_context(|| {
+                        format!("Failed to deserialize cached response for key '{}'", key)
+                    })?;
 
                 // Ensure the cache_hit flag is set on the way out.
                 response.cache_hit = true;
@@ -349,11 +352,10 @@ fn now_secs() -> i64 {
 /// Check whether a rusqlite error indicates database corruption.
 fn is_corruption_error(err: &anyhow::Error) -> bool {
     if let Some(rusqlite_err) = err.downcast_ref::<rusqlite::Error>() {
-        match rusqlite_err.sqlite_error_code() {
-            Some(rusqlite::ErrorCode::DatabaseCorrupt)
-            | Some(rusqlite::ErrorCode::NotADatabase) => true,
-            _ => false,
-        }
+        matches!(
+            rusqlite_err.sqlite_error_code(),
+            Some(rusqlite::ErrorCode::DatabaseCorrupt) | Some(rusqlite::ErrorCode::NotADatabase)
+        )
     } else {
         // Also check the chain for rusqlite errors.
         for cause in err.chain() {
@@ -444,7 +446,10 @@ mod tests {
             .set("key-1", "rust async", "duckduckgo", &response, 3600)
             .expect("set succeeds");
 
-        let cached = cache.get("key-1").expect("get succeeds").expect("should hit");
+        let cached = cache
+            .get("key-1")
+            .expect("get succeeds")
+            .expect("should hit");
         assert_eq!(cached.request_id, "req-1");
         assert_eq!(cached.providers_used, vec!["duckduckgo"]);
         assert_eq!(cached.results.len(), 1);
@@ -461,9 +466,7 @@ mod tests {
         cache
             .set("key-1", "rust", "duckduckgo", &resp1, 3600)
             .unwrap();
-        cache
-            .set("key-2", "rust", "brave", &resp2, 3600)
-            .unwrap();
+        cache.set("key-2", "rust", "brave", &resp2, 3600).unwrap();
 
         let cached1 = cache.get("key-1").unwrap().unwrap();
         let cached2 = cache.get("key-2").unwrap().unwrap();
@@ -496,9 +499,7 @@ mod tests {
         let response = test_response("req-1", "ddg");
 
         // Set with 0-second TTL — expires immediately.
-        cache
-            .set("exp-key", "query", "ddg", &response, 0)
-            .unwrap();
+        cache.set("exp-key", "query", "ddg", &response, 0).unwrap();
 
         let result = cache.get("exp-key").unwrap();
         assert!(result.is_none(), "expired entry should be a miss");
@@ -509,12 +510,8 @@ mod tests {
         let (_dir, cache) = open_temp_cache();
         let response = test_response("req-1", "ddg");
 
-        cache
-            .set("exp-1", "q1", "ddg", &response, 0)
-            .unwrap();
-        cache
-            .set("exp-2", "q2", "ddg", &response, 3600)
-            .unwrap();
+        cache.set("exp-1", "q1", "ddg", &response, 0).unwrap();
+        cache.set("exp-2", "q2", "ddg", &response, 3600).unwrap();
 
         let removed = cache.evict_expired().expect("evict succeeds");
         assert_eq!(removed, 1);
@@ -536,9 +533,7 @@ mod tests {
 
         cache.get("nope").unwrap(); // miss
         cache.get("nope").unwrap(); // miss
-        cache
-            .set("hit-key", "q", "ddg", &response, 3600)
-            .unwrap();
+        cache.set("hit-key", "q", "ddg", &response, 3600).unwrap();
         cache.get("hit-key").unwrap(); // hit
         cache.get("nope").unwrap(); // miss
 
@@ -655,23 +650,15 @@ mod tests {
         let resp = test_response("req-1", "ddg");
 
         // Pre-populate one entry.
-        cache
-            .set("shared", "query", "ddg", &resp, 3600)
-            .unwrap();
+        cache.set("shared", "query", "ddg", &resp, 3600).unwrap();
 
         let mut handles = vec![];
         for i in 0..4 {
             let c = Arc::clone(&cache);
             let r = resp.clone();
             handles.push(std::thread::spawn(move || {
-                c.set(
-                    &format!("thread-{}", i),
-                    "query",
-                    "ddg",
-                    &r,
-                    3600,
-                )
-                .unwrap();
+                c.set(&format!("thread-{}", i), "query", "ddg", &r, 3600)
+                    .unwrap();
                 c.get("shared").unwrap().unwrap()
             }));
         }

@@ -30,7 +30,7 @@ fn ua_pool() -> &'static Vec<&'static str> {
 /// # Example
 ///
 /// ```
-/// use metasearchd::anti_blocking::UserAgentPool;
+/// use skipjackd::anti_blocking::UserAgentPool;
 ///
 /// let ua = UserAgentPool::random_ua();
 /// assert!(!ua.is_empty());

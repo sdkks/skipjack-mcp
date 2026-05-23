@@ -30,8 +30,8 @@ pub struct CacheStats {
 /// # Example
 ///
 /// ```
-/// use metasearchd::cache::cache_key;
-/// use metasearchd::search::Freshness;
+/// use skipjackd::cache::cache_key;
+/// use skipjackd::search::Freshness;
 ///
 /// let key1 = cache_key("rust async", &["duckduckgo".into(), "brave".into()], None);
 /// let key2 = cache_key("rust async", &["brave".into(), "duckduckgo".into()], None);
@@ -71,7 +71,7 @@ pub fn cache_key(query: &str, providers: &[String], freshness: Option<&Freshness
 /// # Example
 ///
 /// ```
-/// use metasearchd::cache::provider_list_string;
+/// use skipjackd::cache::provider_list_string;
 ///
 /// let s = provider_list_string(&["brave".into(), "duckduckgo".into()]);
 /// assert_eq!(s, "brave,duckduckgo");

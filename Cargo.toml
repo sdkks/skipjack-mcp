@@ -1,12 +1,12 @@
 [package]
-name = "metasearchd"
+name = "skipjackd"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "Multi-provider web search daemon with anti-blocking, caching, and MCP integration"
 
 [[bin]]
-name = "metasearchd"
+name = "skipjackd"
 path = "src/main.rs"
 
 [features]

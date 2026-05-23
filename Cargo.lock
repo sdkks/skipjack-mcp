@@ -1172,39 +1172,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
-name = "metasearchd"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes",
- "chrono",
- "clap",
- "dirs",
- "ipnet",
- "libc",
- "rand 0.8.6",
- "reqwest",
- "rmcp",
- "rusqlite",
- "rustls",
- "schemars",
- "scraper",
- "serde",
- "serde_json",
- "sha2",
- "socket2 0.5.10",
- "tempfile",
- "thiserror",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
- "url",
- "uuid",
-]
-
-[[package]]
 name = "mio"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1988,6 +1955,39 @@ name = "siphasher"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
+
+[[package]]
+name = "skipjackd"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "chrono",
+ "clap",
+ "dirs",
+ "ipnet",
+ "libc",
+ "rand 0.8.6",
+ "reqwest",
+ "rmcp",
+ "rusqlite",
+ "rustls",
+ "schemars",
+ "scraper",
+ "serde",
+ "serde_json",
+ "sha2",
+ "socket2 0.5.10",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+]
 
 [[package]]
 name = "slab"

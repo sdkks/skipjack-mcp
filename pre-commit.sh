@@ -9,3 +9,6 @@ cargo clippy -- -D warnings
 
 echo "==> cargo test"
 cargo test
+
+echo "==> cargo build --release"
+cargo build --release

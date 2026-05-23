@@ -45,7 +45,7 @@ pub struct ProviderClientConfig {
 /// # Example
 ///
 /// ```
-/// use metasearchd::search::Tag;
+/// use skipjackd::search::Tag;
 ///
 /// let tag: Tag = serde_json::from_str(r#""Web""#).unwrap();
 /// assert_eq!(tag, Tag::Web);
@@ -93,7 +93,7 @@ pub enum Tag {
 /// # Example
 ///
 /// ```
-/// use metasearchd::search::ProviderError;
+/// use skipjackd::search::ProviderError;
 ///
 /// let err = ProviderError::HttpError {
 ///     status: 503,
@@ -183,8 +183,8 @@ pub enum ProviderError {
 /// # Example
 ///
 /// ```ignore
-/// use metasearchd::search::{Provider, ProviderError, Tag, SearchRequest, SearchResponse};
-/// use metasearchd::search::provider::ProviderClientConfig;
+/// use skipjackd::search::{Provider, ProviderError, Tag, SearchRequest, SearchResponse};
+/// use skipjackd::search::provider::ProviderClientConfig;
 /// use async_trait::async_trait;
 ///
 /// struct MyProvider {

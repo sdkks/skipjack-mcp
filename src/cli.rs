@@ -1,4 +1,4 @@
-//! CLI mode for the metasearchd binary.
+//! CLI mode for the skipjackd binary.
 //!
 //! Implements the CLI personality of the binary (invoked when args are present).
 //! Uses `clap` derive for subcommand dispatch. Communicates with daemon via
@@ -36,11 +36,11 @@ const MAX_MESSAGE_SIZE: usize = 1_048_576;
 
 /// Multi-provider web search daemon — CLI interface.
 ///
-/// Communicates with the metasearchd daemon over a Unix domain socket.
+/// Communicates with the skipjackd daemon over a Unix domain socket.
 /// Fallback subcommands (`usage`) work without a running daemon.
 #[derive(Parser)]
 #[command(
-    name = "metasearchd",
+    name = "skipjackd",
     version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_SHA"), ")"),
     about = "Multi-provider web search daemon with anti-blocking and caching"
 )]
@@ -57,7 +57,7 @@ struct Cli {
 enum Commands {
     /// Run a web search and print results.
     ///
-    /// Connects to the metasearchd daemon, sends a search request, and
+    /// Connects to the skipjackd daemon, sends a search request, and
     /// displays the ranked, deduplicated results.
     Search {
         /// The search query.
@@ -687,7 +687,7 @@ fn cmd_stop(
 /// Execute the `usage` subcommand — print a static LLM-optimized reference.
 fn cmd_usage() {
     const USAGE_TEXT: &str = r#"
-metasearchd — Multi-provider web search daemon (v0.1.0)
+skipjackd — Multi-provider web search daemon (v0.1.0)
 
 SUBCOMMANDS:
 
@@ -739,14 +739,14 @@ SUBCOMMANDS:
 
 DAEMON CONTROL:
 
-  metasearchd --daemon
-    Start the daemon in the background. Writes PID to /tmp/metasearchd.pid,
-    creates Unix socket at /tmp/metasearchd.sock.
+  skipjackd --daemon
+    Start the daemon in the background. Writes PID to /tmp/skipjackd.pid,
+    creates Unix socket at /tmp/skipjackd.sock.
 
-  metasearchd --daemon --config /path/to/config.toml
+  skipjackd --daemon --config /path/to/config.toml
     Start with a custom configuration file.
 
-  metasearchd (no arguments)
+  skipjackd (no arguments)
     Start in MCP (Model Context Protocol) server mode over stdin/stdout.
 
 SOCKET PROTOCOL:
@@ -758,10 +758,10 @@ SOCKET PROTOCOL:
 
 CONFIGURATION:
 
-  Default config: ~/.config/metasearchd/config.toml
-  Override with: --config <PATH> or METASEARCHD_* environment variables.
-  Env var format: METASEARCHD_SECTION__KEY=value (double underscore for nesting).
-  Example: METASEARCHD_CACHE__DEFAULT_TTL_SECS=7200
+  Default config: ~/.config/skipjackd/config.toml
+  Override with: --config <PATH> or SKIPJACKD_* environment variables.
+  Env var format: SKIPJACKD_SECTION__KEY=value (double underscore for nesting).
+  Example: SKIPJACKD_CACHE__DEFAULT_TTL_SECS=7200
 
   Key sections: [daemon], [search], [cache], [dispatch], [anti_blocking],
   [ranking], [[providers]], [tiers]
@@ -782,10 +782,10 @@ PROVIDER MODEL:
 
 FILES:
 
-  /tmp/metasearchd.pid         PID file
-  /tmp/metasearchd.sock         Unix domain socket
-  ~/.cache/metasearchd/cache.db SQLite cache
-  ~/.config/metasearchd/config.toml  Configuration
+  /tmp/skipjackd.pid         PID file
+  /tmp/skipjackd.sock         Unix domain socket
+  ~/.cache/skipjackd/cache.db SQLite cache
+  ~/.config/skipjackd/config.toml  Configuration
 "#;
 
     println!("{}", USAGE_TEXT.trim());
@@ -920,7 +920,7 @@ mod tests {
     /// all optional flags.
     #[test]
     fn test_cli_parse_search_minimal() {
-        let cli = Cli::try_parse_from(["metasearchd", "search", "rust programming"]);
+        let cli = Cli::try_parse_from(["skipjackd", "search", "rust programming"]);
         assert!(cli.is_ok(), "minimal search should parse: {:?}", cli.err());
     }
 
@@ -928,7 +928,7 @@ mod tests {
     #[test]
     fn test_cli_parse_search_full() {
         let cli = Cli::try_parse_from([
-            "metasearchd",
+            "skipjackd",
             "search",
             "rust async",
             "--limit",
@@ -970,38 +970,38 @@ mod tests {
     /// status subcommand should parse.
     #[test]
     fn test_cli_parse_status() {
-        let cli = Cli::try_parse_from(["metasearchd", "status"]);
+        let cli = Cli::try_parse_from(["skipjackd", "status"]);
         assert!(cli.is_ok(), "status should parse: {:?}", cli.err());
     }
 
     /// stop subcommand should parse.
     #[test]
     fn test_cli_parse_stop() {
-        let cli = Cli::try_parse_from(["metasearchd", "stop"]);
+        let cli = Cli::try_parse_from(["skipjackd", "stop"]);
         assert!(cli.is_ok(), "stop should parse: {:?}", cli.err());
     }
 
     /// usage subcommand should parse.
     #[test]
     fn test_cli_parse_usage() {
-        let cli = Cli::try_parse_from(["metasearchd", "usage"]);
+        let cli = Cli::try_parse_from(["skipjackd", "usage"]);
         assert!(cli.is_ok(), "usage should parse: {:?}", cli.err());
     }
 
     /// providers subcommand should parse.
     #[test]
     fn test_cli_parse_providers() {
-        let cli = Cli::try_parse_from(["metasearchd", "providers"]);
+        let cli = Cli::try_parse_from(["skipjackd", "providers"]);
         assert!(cli.is_ok(), "providers should parse: {:?}", cli.err());
     }
 
     /// cache-clear subcommand should parse with and without provider flag.
     #[test]
     fn test_cli_parse_cache_clear() {
-        let cli = Cli::try_parse_from(["metasearchd", "cache-clear"]);
+        let cli = Cli::try_parse_from(["skipjackd", "cache-clear"]);
         assert!(cli.is_ok(), "cache-clear should parse: {:?}", cli.err());
 
-        let cli = Cli::try_parse_from(["metasearchd", "cache-clear", "--provider", "duckduckgo"]);
+        let cli = Cli::try_parse_from(["skipjackd", "cache-clear", "--provider", "duckduckgo"]);
         assert!(
             cli.is_ok(),
             "cache-clear with provider should parse: {:?}",
@@ -1012,13 +1012,8 @@ mod tests {
     /// Global --config flag should parse.
     #[test]
     fn test_cli_parse_with_global_config() {
-        let cli = Cli::try_parse_from([
-            "metasearchd",
-            "--config",
-            "/tmp/test.toml",
-            "search",
-            "test",
-        ]);
+        let cli =
+            Cli::try_parse_from(["skipjackd", "--config", "/tmp/test.toml", "search", "test"]);
         assert!(
             cli.is_ok(),
             "global config flag should parse: {:?}",
@@ -1055,7 +1050,7 @@ mod tests {
     /// The search command with --no-safe-search flag means safe_search is OFF.
     #[test]
     fn test_search_safe_search_flag() {
-        let cli = Cli::try_parse_from(["metasearchd", "search", "--no-safe-search", "test query"]);
+        let cli = Cli::try_parse_from(["skipjackd", "search", "--no-safe-search", "test query"]);
         assert!(
             cli.is_ok(),
             "search with --no-safe-search should parse: {:?}",

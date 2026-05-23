@@ -65,9 +65,9 @@ struct BraveWebResult {
 ///
 /// ```ignore
 /// use std::sync::Arc;
-/// use metasearchd::anti_blocking::RateLimiter;
-/// use metasearchd::search::provider::ProviderClientConfig;
-/// use metasearchd::search::providers::brave::BraveProvider;
+/// use skipjackd::anti_blocking::RateLimiter;
+/// use skipjackd::search::provider::ProviderClientConfig;
+/// use skipjackd::search::providers::brave::BraveProvider;
 ///
 /// let config = ProviderClientConfig {
 ///     tls_shuffle_ciphers: false,

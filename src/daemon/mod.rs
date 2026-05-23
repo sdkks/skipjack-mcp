@@ -19,8 +19,8 @@
 //! # Example
 //!
 //! ```ignore
-//! use metasearchd::config::Config;
-//! use metasearchd::daemon::Daemon;
+//! use skipjackd::config::Config;
+//! use skipjackd::daemon::Daemon;
 //!
 //! let config = Config::load(None)?.freeze();
 //! Daemon::start(config, None).await?;
@@ -39,6 +39,7 @@ use tokio::sync::{Notify, RwLock};
 use tracing;
 
 use crate::config::Config;
+use crate::daemon::manager::Manager;
 
 pub mod manager;
 pub mod protocol;
@@ -59,9 +60,9 @@ pub use protocol::{ProviderHealth, ProviderInfo, Request, Response};
 pub struct Daemon {
     /// Shared configuration, atomically swappable on SIGHUP reload.
     config: Arc<RwLock<Arc<Config>>>,
-    /// Path to the socket file (e.g., `/tmp/metasearchd.sock`).
+    /// Path to the socket file (e.g., `/tmp/skipjackd.sock`).
     socket_path: PathBuf,
-    /// Path to the PID file (e.g., `/tmp/metasearchd.pid`).
+    /// Path to the PID file (e.g., `/tmp/skipjackd.pid`).
     pid_path: PathBuf,
     /// Instant the daemon was started (for uptime reporting).
     started_at: Instant,
@@ -128,13 +129,22 @@ impl Daemon {
             config_path,
         ));
 
-        // 6. Spawn the accept loop.
+        // 6. Create the provider manager.
+        let manager = Arc::new(
+            Manager::new(&config)
+                .await
+                .context("Failed to create provider manager")?,
+        );
+
+        // 7. Spawn the accept loop.
         let config_for_accept = Arc::clone(&config_lock);
+        let manager_for_accept = Arc::clone(&manager);
         let shutdown_for_accept = Arc::clone(&shutdown_notify);
         let reload_for_accept = Arc::clone(&reload_requested);
         let handle = tokio::spawn(accept_loop(
             listener,
             config_for_accept,
+            manager_for_accept,
             reload_for_accept,
             shutdown_for_accept,
         ));
@@ -369,6 +379,7 @@ fn create_socket(socket_path: &Path) -> anyhow::Result<UnixListener> {
 async fn accept_loop(
     listener: UnixListener,
     config: Arc<RwLock<Arc<Config>>>,
+    manager: Arc<Manager>,
     reload_requested: Arc<AtomicBool>,
     shutdown_notify: Arc<Notify>,
 ) -> anyhow::Result<()> {
@@ -391,8 +402,9 @@ async fn accept_loop(
                             peer = ?peer_addr,
                             "accepted connection"
                         );
+                        let mgr = Arc::clone(&manager);
                         tokio::spawn(async move {
-                            if let Err(e) = server::handle_connection(stream, current_config).await {
+                            if let Err(e) = server::handle_connection(stream, current_config, mgr).await {
                                 tracing::warn!(error = %e, "connection handler error");
                             }
                         });

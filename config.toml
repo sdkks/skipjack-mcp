@@ -1,13 +1,13 @@
-# metasearchd reference configuration
+# skipjackd reference configuration
 # ===================================
 # This file documents every configuration option with its default value.
-# Copy this file to ~/.config/metasearchd/config.toml and customize.
-# Environment variables with the METASEARCHD_ prefix override these values:
-#   METASEARCHD_CACHE__DEFAULT_TTL_SECS=7200 -> cache.default_ttl_secs = 7200
+# Copy this file to ~/.config/skipjackd/config.toml and customize.
+# Environment variables with the SKIPJACKD_ prefix override these values:
+#   SKIPJACKD_CACHE__DEFAULT_TTL_SECS=7200 -> cache.default_ttl_secs = 7200
 
 # --- Daemon settings ----------------------------------------------------
 [daemon]
-name = "metasearchd"
+name = "skipjackd"
 socket_dir = "/tmp"
 pid_dir = "/tmp"
 shutdown_grace_period_secs = 30
@@ -16,7 +16,7 @@ log_file = ""                   # empty = stdout
 
 # --- Cache settings -----------------------------------------------------
 [cache]
-db_path = "~/.cache/metasearchd/cache.db"
+db_path = "~/.cache/skipjackd/cache.db"
 default_ttl_secs = 3600
 eviction_interval_secs = 300
 
@@ -112,16 +112,25 @@ retry_max_attempts = 3
 tags = ["web"]
 weight = 1.2
 
+[[providers]]
+name = "searxng"
+enabled = true
+# Set to your SearXNG instance URL (HTTP or HTTPS):
+# base_url = "http://localhost:8080"
+# base_url = "https://search.example.com"
+rate_limit_rpm = 20
+tags = ["web", "privacy"]
+
 # --- Tier ladder (for tiered dispatch mode) -----------------------------
 [tiers]
-order = [0, 1, 2, 3, 4, 5]
+order = [0, 1, 2, 3]
 
 [tiers.0]
-providers = ["duckduckgo", "mojeek"]
+providers = ["duckduckgo"]
 timeout_secs = 10
 
 [tiers.1]
-providers = ["jina", "serper"]
+providers = ["jina"]
 timeout_secs = 15
 
 [tiers.2]
@@ -129,14 +138,5 @@ providers = ["brave"]
 timeout_secs = 15
 
 [tiers.3]
-providers = ["dataforseo"]
-timeout_secs = 20
-
-[tiers.4]
 providers = ["searxng"]
 timeout_secs = 20
-
-[tiers.5]
-providers = []
-timeout_secs = 30
-# Tier 5 (Playwright) is deferred. The tier exists but is empty in v1.

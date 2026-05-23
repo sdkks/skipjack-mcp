@@ -117,8 +117,8 @@ impl ClassifyRetry for ProviderError {
 /// # Example
 ///
 /// ```ignore
-/// use metasearchd::anti_blocking::{retry_with_backoff, RetryConfig};
-/// use metasearchd::search::ProviderError;
+/// use skipjackd::anti_blocking::{retry_with_backoff, RetryConfig};
+/// use skipjackd::search::ProviderError;
 ///
 /// let config = RetryConfig::new(1, 3, 60);
 /// let result = retry_with_backoff(

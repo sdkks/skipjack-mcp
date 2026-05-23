@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# install.sh — install metasearchd from GitHub releases
+# install.sh — install skipjackd from GitHub releases
 #
 # Usage:
 #   curl -sSL https://raw.githubusercontent.com/said/ocak-forge/main/install.sh | sh
@@ -10,7 +10,7 @@ set -euo pipefail
 # Detects OS and architecture, downloads the matching release binary,
 # and installs to ~/.local/bin (or /usr/local/bin with sudo).
 
-REPO="${REPO:-said/metasearchd}"
+REPO="${REPO:-said/skipjackd}"
 VERSION="${VERSION:-latest}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 
@@ -52,11 +52,11 @@ main() {
     local platform binary_name tarball_url tarball_name
 
     platform="$(detect_platform)"
-    binary_name="metasearchd-${platform}"
+    binary_name="skipjackd-${platform}"
     tarball_name="${binary_name}.tar.gz"
 
     log_info "Detected platform: ${platform}"
-    log_info "Installing metasearchd ${VERSION} to ${INSTALL_DIR}"
+    log_info "Installing skipjackd ${VERSION} to ${INSTALL_DIR}"
 
     # Determine download URL
     if [ "${VERSION}" = "latest" ]; then
@@ -83,16 +83,16 @@ main() {
     tar xzf "${tmpdir}/${tarball_name}" -C "${tmpdir}"
 
     mkdir -p "${INSTALL_DIR}"
-    cp "${tmpdir}/metasearchd" "${INSTALL_DIR}/metasearchd"
-    chmod +x "${INSTALL_DIR}/metasearchd"
+    cp "${tmpdir}/skipjackd" "${INSTALL_DIR}/skipjackd"
+    chmod +x "${INSTALL_DIR}/skipjackd"
 
-    log_info "metasearchd installed to ${INSTALL_DIR}/metasearchd"
+    log_info "skipjackd installed to ${INSTALL_DIR}/skipjackd"
 
     # Verify installation
-    if command -v metasearchd > /dev/null 2>&1; then
-        metasearchd --version 2>&1 || true
-    elif [ -x "${INSTALL_DIR}/metasearchd" ]; then
-        "${INSTALL_DIR}/metasearchd" --version 2>&1 || true
+    if command -v skipjackd > /dev/null 2>&1; then
+        skipjackd --version 2>&1 || true
+    elif [ -x "${INSTALL_DIR}/skipjackd" ]; then
+        "${INSTALL_DIR}/skipjackd" --version 2>&1 || true
     fi
 
     log_info "Installation complete. Ensure ${INSTALL_DIR} is in your PATH."

@@ -23,7 +23,8 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
-use super::protocol::{Request, Response, MAX_MESSAGE_SIZE};
+use super::manager::{HealthStatus, Manager};
+use super::protocol::{ProviderHealth, ProviderInfo, Request, Response, MAX_MESSAGE_SIZE};
 use crate::config::Config;
 
 // ---------------------------------------------------------------------------
@@ -43,7 +44,11 @@ use crate::config::Config;
 ///   connection close.
 /// - Malformed JSON results in an Error response but the connection stays
 ///   open for subsequent requests.
-pub async fn handle_connection(stream: UnixStream, config: Arc<Config>) -> anyhow::Result<()> {
+pub async fn handle_connection(
+    stream: UnixStream,
+    config: Arc<Config>,
+    manager: Arc<Manager>,
+) -> anyhow::Result<()> {
     let (reader, mut writer) = tokio::io::split(stream);
     let mut buf_reader = BufReader::new(reader);
     let mut line = String::new();
@@ -64,7 +69,7 @@ pub async fn handle_connection(stream: UnixStream, config: Arc<Config>) -> anyho
                 // Got a line; parse and dispatch.
                 match serde_json::from_str::<Request>(line.trim()) {
                     Ok(request) => {
-                        let response = dispatch_request(request, &config);
+                        let response = dispatch_request(request, &config, &manager).await;
                         write_response(&mut writer, &response).await?;
                     }
                     Err(e) => {
@@ -180,42 +185,75 @@ enum ReadError {
 /// This function is the central routing point for all daemon requests.
 /// As daemon subsystems (cache, provider manager, etc.) are implemented,
 /// the placeholder stubs here are replaced with real implementations.
-fn dispatch_request(request: Request, _config: &Config) -> Response {
+async fn dispatch_request(request: Request, _config: &Config, manager: &Manager) -> Response {
     match request {
         Request::Search(_search_req) => Response::Error {
             code: -32601,
             message: "Search: not yet implemented".into(),
             data: None,
         },
-        Request::ListProviders => Response::Error {
-            code: -32601,
-            message: "ListProviders: not yet implemented".into(),
-            data: None,
-        },
-        Request::CacheStats => Response::Error {
-            code: -32601,
-            message: "CacheStats: not yet implemented".into(),
-            data: None,
-        },
-        Request::ProviderStatus => Response::Error {
-            code: -32601,
-            message: "ProviderStatus: not yet implemented".into(),
-            data: None,
-        },
-        Request::CacheClear { .. } => Response::Error {
-            code: -32601,
-            message: "CacheClear: not yet implemented".into(),
-            data: None,
+        Request::ListProviders => {
+            let health_snapshot = manager.health_snapshot().await;
+            let providers = manager
+                .catalog()
+                .all_providers()
+                .iter()
+                .map(|p| {
+                    let name = p.name().to_string();
+                    let health = health_snapshot.get(&name);
+                    ProviderInfo {
+                        name: name.clone(),
+                        description: p.description().to_string(),
+                        tags: p.tags().iter().map(|t| format!("{:?}", t)).collect(),
+                        available: p.is_available(),
+                        healthy: health.map(|h| h.is_healthy()).unwrap_or(true),
+                        health_score: health.map(|h| h.health_score()).unwrap_or(1.0),
+                    }
+                })
+                .collect();
+            Response::ProviderList { providers }
+        }
+        Request::CacheStats => {
+            let stats = manager.cache_stats();
+            Response::CacheStats {
+                total_entries: stats.total_entries,
+                total_size_bytes: stats.total_size_bytes,
+                hit_count: stats.hit_count,
+                miss_count: stats.miss_count,
+                hit_rate: stats.hit_rate,
+            }
+        }
+        Request::ProviderStatus => {
+            let health_snapshot = manager.health_snapshot().await;
+            let providers = health_snapshot
+                .iter()
+                .map(|(name, state)| ProviderHealth {
+                    name: name.clone(),
+                    healthy: state.is_healthy(),
+                    degraded: state.status() == HealthStatus::Degraded,
+                    health_score: state.health_score(),
+                    success_count: 0,
+                    failure_count: state.consecutive_failures() as u64,
+                    last_error: None,
+                })
+                .collect();
+            Response::ProviderStatus { providers }
+        }
+        Request::CacheClear { provider } => match manager.clear_cache(provider.as_deref()) {
+            Ok(removed) => Response::CacheCleared { removed },
+            Err(e) => Response::Error {
+                code: -32603,
+                message: format!("Failed to clear cache: {}", e),
+                data: None,
+            },
         },
         Request::Health => Response::Health {
             status: "ok".into(),
-            uptime_secs: 0, // populated by daemon when wired up
+            uptime_secs: 0,
             version: env!("CARGO_PKG_VERSION").into(),
         },
         Request::Shutdown => {
             tracing::info!("shutdown requested via socket");
-            // The daemon accept loop should watch for a shutdown signal.
-            // For now, just acknowledge.
             Response::ShutdownAck
         }
     }
@@ -246,25 +284,42 @@ async fn write_response<W: AsyncWrite + Unpin>(
 mod tests {
     use super::*;
     use crate::search::SearchRequest;
+    use std::sync::Mutex;
     use tokio::io::AsyncWriteExt;
     use tokio::net::UnixStream;
+
+    /// Serialize access to the temp directory so SQLite doesn't clash.
+    static DB_MUTEX: Mutex<()> = Mutex::new(());
+
+    /// Create a test config pointing at a temp database.
+    fn test_config(dir: &tempfile::TempDir) -> Config {
+        let db_path = dir.path().join("test.db").to_string_lossy().to_string();
+        let mut config = Config::default();
+        config.cache.db_path = db_path;
+        config
+    }
 
     /// Helper: spawn a daemon-side handler on a socket pair and return the
     /// client-side stream.
     async fn spawn_handler(
         config: Arc<Config>,
+        manager: Arc<Manager>,
     ) -> (UnixStream, tokio::task::JoinHandle<anyhow::Result<()>>) {
         let (server, client) = UnixStream::pair().expect("create socket pair");
         let config_clone = Arc::clone(&config);
-        let handle = tokio::spawn(async move { handle_connection(server, config_clone).await });
+        let handle =
+            tokio::spawn(async move { handle_connection(server, config_clone, manager).await });
         (client, handle)
     }
 
     /// The Health request should return a valid Health response.
     #[tokio::test]
     async fn health_request_returns_ok() {
-        let config = Arc::new(Config::default());
-        let (mut client, _handle) = spawn_handler(config).await;
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let _guard = DB_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let config = Arc::new(test_config(&dir));
+        let manager = Arc::new(Manager::new(&config).await.expect("create manager"));
+        let (mut client, _handle) = spawn_handler(config, manager).await;
 
         let req_json = r#"{"type":"Health"}"#;
         client.write_all(req_json.as_bytes()).await.unwrap();
@@ -287,8 +342,11 @@ mod tests {
     /// An unknown or malformed request should return an Error response.
     #[tokio::test]
     async fn malformed_request_returns_error() {
-        let config = Arc::new(Config::default());
-        let (mut client, _handle) = spawn_handler(config).await;
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let _guard = DB_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let config = Arc::new(test_config(&dir));
+        let manager = Arc::new(Manager::new(&config).await.expect("create manager"));
+        let (mut client, _handle) = spawn_handler(config, manager).await;
 
         // Send invalid JSON
         client.write_all(b"{bad json\n").await.unwrap();
@@ -312,8 +370,11 @@ mod tests {
     /// A valid Search request (unimplemented) should return an Error with -32601.
     #[tokio::test]
     async fn unimplemented_request_returns_method_not_found() {
-        let config = Arc::new(Config::default());
-        let (mut client, _handle) = spawn_handler(config).await;
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let _guard = DB_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let config = Arc::new(test_config(&dir));
+        let manager = Arc::new(Manager::new(&config).await.expect("create manager"));
+        let (mut client, _handle) = spawn_handler(config, manager).await;
 
         let request = Request::Search(SearchRequest {
             request_id: "test".into(),
@@ -350,8 +411,11 @@ mod tests {
     /// Sending zero bytes (immediate EOF) should be handled cleanly.
     #[tokio::test]
     async fn client_disconnect_without_data() {
-        let config = Arc::new(Config::default());
-        let (client, handle) = spawn_handler(config).await;
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let _guard = DB_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let config = Arc::new(test_config(&dir));
+        let manager = Arc::new(Manager::new(&config).await.expect("create manager"));
+        let (client, handle) = spawn_handler(config, manager).await;
 
         // Drop the client immediately, signaling EOF.
         drop(client);
@@ -367,8 +431,11 @@ mod tests {
     /// Multiple requests on the same connection should all receive responses.
     #[tokio::test]
     async fn multiple_requests_on_same_connection() {
-        let config = Arc::new(Config::default());
-        let (mut client, _handle) = spawn_handler(config).await;
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let _guard = DB_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let config = Arc::new(test_config(&dir));
+        let manager = Arc::new(Manager::new(&config).await.expect("create manager"));
+        let (mut client, _handle) = spawn_handler(config, manager).await;
 
         for _ in 0..3 {
             client.write_all(b"{\"type\":\"Health\"}\n").await.unwrap();
@@ -388,8 +455,11 @@ mod tests {
     /// Shutdown request should return ShutdownAck.
     #[tokio::test]
     async fn shutdown_returns_ack() {
-        let config = Arc::new(Config::default());
-        let (mut client, _handle) = spawn_handler(config).await;
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let _guard = DB_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let config = Arc::new(test_config(&dir));
+        let manager = Arc::new(Manager::new(&config).await.expect("create manager"));
+        let (mut client, _handle) = spawn_handler(config, manager).await;
 
         client
             .write_all(b"{\"type\":\"Shutdown\"}\n")
@@ -410,8 +480,11 @@ mod tests {
     /// Sending a message over 1MB should return an Error with code -32600.
     #[tokio::test]
     async fn oversized_message_returns_error() {
-        let config = Arc::new(Config::default());
-        let (mut client, _handle) = spawn_handler(config).await;
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let _guard = DB_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let config = Arc::new(test_config(&dir));
+        let manager = Arc::new(Manager::new(&config).await.expect("create manager"));
+        let (mut client, _handle) = spawn_handler(config, manager).await;
 
         // Build a JSON message where the body exceeds 1MB.
         let padding = "A".repeat(MAX_MESSAGE_SIZE + 1024);

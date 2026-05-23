@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "skipjackd": {
+      "command": "skipjackd",
+      "args": [],
+      "description": "Multi-provider web search daemon — concurrent dispatch, caching, anti-blocking"
+    }
+  }
+}

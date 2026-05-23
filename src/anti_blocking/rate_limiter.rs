@@ -22,7 +22,7 @@ use tokio::time::sleep;
 /// # Example
 ///
 /// ```ignore
-/// use metasearchd::anti_blocking::RateLimiter;
+/// use skipjackd::anti_blocking::RateLimiter;
 /// use std::sync::Arc;
 ///
 /// let limiter = Arc::new(RateLimiter::new());

@@ -274,10 +274,7 @@ struct MetasearchServer {
 impl ServerHandler for MetasearchServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(Default::default())
-            .with_server_info(Implementation::new(
-                "metasearchd",
-                env!("CARGO_PKG_VERSION"),
-            ))
+            .with_server_info(Implementation::new("skipjackd", env!("CARGO_PKG_VERSION")))
             .with_instructions(
                 "Multi-provider web search daemon with anti-blocking, caching, and MCP integration",
             )

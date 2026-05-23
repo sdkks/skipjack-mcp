@@ -1,5 +1,8 @@
 .PHONY: build test lint fix install-pre-commit-hook clean tap-push
 
+install:
+	cargo install --path .
+
 build:
 	cargo build --release
 

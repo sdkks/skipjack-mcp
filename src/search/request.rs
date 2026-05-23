@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 /// # Example
 ///
 /// ```
-/// use metasearchd::search::SearchResult;
+/// use skipjackd::search::SearchResult;
 ///
 /// let result = SearchResult {
 ///     title: "Rust Programming Language".into(),
@@ -44,7 +44,7 @@ pub struct SearchResult {
 /// # Example
 ///
 /// ```
-/// use metasearchd::search::{SearchRequest, Freshness};
+/// use skipjackd::search::{SearchRequest, Freshness};
 ///
 /// let request = SearchRequest {
 ///     request_id: "550e8400-e29b-41d4-a716-446655440000".into(),
@@ -92,7 +92,7 @@ pub struct SearchRequest {
 /// # Example
 ///
 /// ```
-/// use metasearchd::search::Freshness;
+/// use skipjackd::search::Freshness;
 ///
 /// let f: Freshness = serde_json::from_str(r#""Week""#).unwrap();
 /// assert!(matches!(f, Freshness::Week));
@@ -114,7 +114,7 @@ pub enum Freshness {
 /// # Example
 ///
 /// ```
-/// use metasearchd::search::{SearchResponse, SearchResult};
+/// use skipjackd::search::{SearchResponse, SearchResult};
 ///
 /// let response = SearchResponse {
 ///     request_id: "550e8400-e29b-41d4-a716-446655440000".into(),

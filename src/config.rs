@@ -1,9 +1,9 @@
 //! Configuration system with TOML parsing and environment variable overrides.
 //!
-//! Reads configuration from `~/.config/metasearchd/config.toml` by default,
-//! with an optional path override. Environment variables with the `METASEARCHD_`
+//! Reads configuration from `~/.config/skipjackd/config.toml` by default,
+//! with an optional path override. Environment variables with the `SKIPJACKD_`
 //! prefix override config file values using double-underscore separators for
-//! nested keys (e.g., `METASEARCHD_CACHE__DEFAULT_TTL_SECS=7200`).
+//! nested keys (e.g., `SKIPJACKD_CACHE__DEFAULT_TTL_SECS=7200`).
 //!
 //! The config is frozen into an `Arc<Config>` after loading for sharing across
 //! the application.
@@ -39,7 +39,7 @@ pub struct DaemonConfig {
 impl Default for DaemonConfig {
     fn default() -> Self {
         DaemonConfig {
-            name: "metasearchd".into(),
+            name: "skipjackd".into(),
             socket_dir: "/tmp".into(),
             pid_dir: "/tmp".into(),
             shutdown_grace_period_secs: 30,
@@ -79,7 +79,7 @@ fn default_cache_db_path() -> String {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".cache")
-        .join("metasearchd")
+        .join("skipjackd")
         .join("cache.db")
         .to_string_lossy()
         .to_string()
@@ -408,18 +408,18 @@ pub struct Config {
 }
 
 impl Config {
-    /// Load configuration from the default path (`~/.config/metasearchd/config.toml`)
+    /// Load configuration from the default path (`~/.config/skipjackd/config.toml`)
     /// or an optional explicit path.
     ///
     /// If the config file does not exist, defaults are used and a warning is logged.
-    /// Environment variables with the `METASEARCHD_` prefix are applied as overrides
+    /// Environment variables with the `SKIPJACKD_` prefix are applied as overrides
     /// after the file is parsed. Provider API keys are resolved from environment
     /// variables when `api_key_env` is set.
     pub fn load(config_path: Option<&str>) -> anyhow::Result<Config> {
         let default_path = dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".config")
-            .join("metasearchd")
+            .join("skipjackd")
             .join("config.toml");
 
         let path: &Path = match config_path {
@@ -456,7 +456,7 @@ impl Config {
 // Environment variable overrides
 // ---------------------------------------------------------------------------
 
-/// Walk all env vars with the `METASEARCHD_` prefix and apply them as overrides
+/// Walk all env vars with the `SKIPJACKD_` prefix and apply them as overrides
 /// to the config. Double underscores (`__`) map to nested TOML keys.
 fn apply_env_overrides(config: &mut Config) -> anyhow::Result<()> {
     // Round-trip current config to a toml::Table for structural manipulation.
@@ -464,7 +464,7 @@ fn apply_env_overrides(config: &mut Config) -> anyhow::Result<()> {
     let mut root: toml::Table = toml::from_str(&config_str)?;
 
     for (key, value) in std::env::vars() {
-        if let Some(suffix) = key.strip_prefix("METASEARCHD_") {
+        if let Some(suffix) = key.strip_prefix("SKIPJACKD_") {
             let parts: Vec<&str> = suffix.split("__").collect();
             if parts.is_empty() {
                 continue;
@@ -574,7 +574,7 @@ mod tests {
         let parsed: Config = toml::from_str(&toml_str).expect("parse round-tripped config");
 
         // Daemon defaults
-        assert_eq!(parsed.daemon.name, "metasearchd");
+        assert_eq!(parsed.daemon.name, "skipjackd");
         assert_eq!(parsed.daemon.socket_dir, "/tmp");
         assert_eq!(parsed.daemon.pid_dir, "/tmp");
         assert_eq!(parsed.daemon.shutdown_grace_period_secs, 30);
@@ -652,13 +652,13 @@ default_limit = 25
     #[test]
     fn provider_api_key_resolved_from_env() {
         // Set up a test env var
-        std::env::set_var("METASEARCHD_TEST_JINA_KEY", "test-jina-key-12345");
+        std::env::set_var("SKIPJACKD_TEST_JINA_KEY", "test-jina-key-12345");
 
         let toml_str = r#"
 [[providers]]
 name = "jina"
 enabled = true
-api_key_env = "METASEARCHD_TEST_JINA_KEY"
+api_key_env = "SKIPJACKD_TEST_JINA_KEY"
 "#;
 
         let mut config: Config = toml::from_str(toml_str).expect("parse provider config");
@@ -671,7 +671,7 @@ api_key_env = "METASEARCHD_TEST_JINA_KEY"
         );
 
         // Clean up
-        std::env::remove_var("METASEARCHD_TEST_JINA_KEY");
+        std::env::remove_var("SKIPJACKD_TEST_JINA_KEY");
     }
 
     /// A provider with a missing `api_key_env` variable should log a warning
@@ -721,29 +721,29 @@ enabled = true
         let config = Config::default();
         let frozen = config.freeze();
 
-        assert_eq!(frozen.daemon.name, "metasearchd");
+        assert_eq!(frozen.daemon.name, "skipjackd");
         // Verify Arc reference count starts at 1
         assert_eq!(Arc::strong_count(&frozen), 1);
     }
 
-    /// Test that `METASEARCHD_CACHE__DEFAULT_TTL_SECS=7200` env override works.
+    /// Test that `SKIPJACKD_CACHE__DEFAULT_TTL_SECS=7200` env override works.
     #[test]
     fn env_override_sets_cache_ttl() {
-        std::env::set_var("METASEARCHD_CACHE__DEFAULT_TTL_SECS", "7200");
+        std::env::set_var("SKIPJACKD_CACHE__DEFAULT_TTL_SECS", "7200");
 
         let mut config = Config::default();
         apply_env_overrides(&mut config).expect("apply env overrides");
 
         assert_eq!(config.cache.default_ttl_secs, 7200);
 
-        std::env::remove_var("METASEARCHD_CACHE__DEFAULT_TTL_SECS");
+        std::env::remove_var("SKIPJACKD_CACHE__DEFAULT_TTL_SECS");
     }
 
     /// Test nested env override for ranking dimensions.
     #[test]
     fn env_override_sets_ranking_dimension() {
-        std::env::set_var("METASEARCHD_RANKING__FRESHNESS_BONUS__ENABLED", "true");
-        std::env::set_var("METASEARCHD_RANKING__FRESHNESS_BONUS__WEIGHT", "0.5");
+        std::env::set_var("SKIPJACKD_RANKING__FRESHNESS_BONUS__ENABLED", "true");
+        std::env::set_var("SKIPJACKD_RANKING__FRESHNESS_BONUS__WEIGHT", "0.5");
 
         let mut config = Config::default();
         apply_env_overrides(&mut config).expect("apply env overrides");
@@ -751,47 +751,47 @@ enabled = true
         assert!(config.ranking.freshness_bonus.enabled);
         assert!((config.ranking.freshness_bonus.weight - 0.5).abs() < f64::EPSILON);
 
-        std::env::remove_var("METASEARCHD_RANKING__FRESHNESS_BONUS__ENABLED");
-        std::env::remove_var("METASEARCHD_RANKING__FRESHNESS_BONUS__WEIGHT");
+        std::env::remove_var("SKIPJACKD_RANKING__FRESHNESS_BONUS__ENABLED");
+        std::env::remove_var("SKIPJACKD_RANKING__FRESHNESS_BONUS__WEIGHT");
     }
 
     /// Test that boolean env values parse correctly.
     #[test]
     fn env_override_boolean_values() {
-        std::env::set_var("METASEARCHD_RANKING__RESULT_POSITION__ENABLED", "false");
+        std::env::set_var("SKIPJACKD_RANKING__RESULT_POSITION__ENABLED", "false");
 
         let mut config = Config::default();
         apply_env_overrides(&mut config).expect("apply env overrides");
 
         assert!(!config.ranking.result_position.enabled);
 
-        std::env::remove_var("METASEARCHD_RANKING__RESULT_POSITION__ENABLED");
+        std::env::remove_var("SKIPJACKD_RANKING__RESULT_POSITION__ENABLED");
     }
 
     /// Test that string env values parse correctly (including those with spaces).
     #[test]
     fn env_override_string_value() {
-        std::env::set_var("METASEARCHD_DAEMON__LOG_LEVEL", "debug");
+        std::env::set_var("SKIPJACKD_DAEMON__LOG_LEVEL", "debug");
 
         let mut config = Config::default();
         apply_env_overrides(&mut config).expect("apply env overrides");
 
         assert_eq!(config.daemon.log_level, "debug");
 
-        std::env::remove_var("METASEARCHD_DAEMON__LOG_LEVEL");
+        std::env::remove_var("SKIPJACKD_DAEMON__LOG_LEVEL");
     }
 
     /// Test that array env values parse correctly via TOML array syntax in env var.
     #[test]
     fn env_override_array_value() {
-        std::env::set_var("METASEARCHD_TIERS__ORDER", "[0, 1, 2]");
+        std::env::set_var("SKIPJACKD_TIERS__ORDER", "[0, 1, 2]");
 
         let mut config = Config::default();
         apply_env_overrides(&mut config).expect("apply env overrides");
 
         assert_eq!(config.tiers.order, vec![0, 1, 2]);
 
-        std::env::remove_var("METASEARCHD_TIERS__ORDER");
+        std::env::remove_var("SKIPJACKD_TIERS__ORDER");
     }
 
     /// The `dispatch.mode` field defaults to "concurrent" and can be overridden.
@@ -802,10 +802,10 @@ enabled = true
         assert_eq!(config.dispatch.mode, "concurrent");
 
         // Override via env
-        std::env::set_var("METASEARCHD_DISPATCH__MODE", "tiered");
+        std::env::set_var("SKIPJACKD_DISPATCH__MODE", "tiered");
         let mut config = Config::default();
         apply_env_overrides(&mut config).expect("apply env overrides");
         assert_eq!(config.dispatch.mode, "tiered");
-        std::env::remove_var("METASEARCHD_DISPATCH__MODE");
+        std::env::remove_var("SKIPJACKD_DISPATCH__MODE");
     }
 }

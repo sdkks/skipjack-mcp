@@ -1,7 +1,7 @@
 use std::env;
 use std::process;
 
-use metasearchd::config::Config;
+use skipjackd::config::Config;
 
 #[tokio::main]
 async fn main() {
@@ -24,7 +24,7 @@ async fn main() {
     if args.get(1).is_some_and(|a| a == "--daemon") {
         // Daemon mode (FR-1.1).
         eprintln!(
-            "metasearchd {} ({}) starting daemon...",
+            "skipjackd {} ({}) starting daemon...",
             env!("CARGO_PKG_VERSION"),
             env!("GIT_SHA")
         );
@@ -33,7 +33,7 @@ async fn main() {
             process::exit(1);
         });
         let frozen = config.freeze();
-        match metasearchd::daemon::Daemon::start(frozen, config_path).await {
+        match skipjackd::daemon::Daemon::start(frozen, config_path).await {
             Ok(daemon) => {
                 if let Err(e) = daemon.wait().await {
                     eprintln!("Daemon exited with error: {}", e);
@@ -49,7 +49,7 @@ async fn main() {
     }
 
     // CLI mode — dispatch to the CLI module.
-    if let Err(e) = metasearchd::cli::run().await {
+    if let Err(e) = skipjackd::cli::run().await {
         let err_msg = e.to_string();
         // Match the context string from send_request() in cli.rs.
         let is_daemon_unreachable = err_msg.contains("daemon not running");
@@ -92,5 +92,5 @@ async fn run_mcp() -> anyhow::Result<()> {
 
     let config = Config::load(None)?;
     let frozen = config.freeze();
-    metasearchd::mcp::run(frozen).await
+    skipjackd::mcp::run(frozen).await
 }

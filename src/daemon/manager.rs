@@ -286,8 +286,8 @@ impl ProviderCatalog {
 /// # Example
 ///
 /// ```ignore
-/// use metasearchd::config::Config;
-/// use metasearchd::daemon::manager::Manager;
+/// use skipjackd::config::Config;
+/// use skipjackd::daemon::manager::Manager;
 ///
 /// let config = Config::load(None)?.freeze();
 /// let manager = Manager::new(&config).await?;
@@ -946,6 +946,15 @@ impl Manager {
     /// Return the current cache statistics.
     pub fn cache_stats(&self) -> crate::cache::CacheStats {
         self.cache.stats()
+    }
+
+    /// Clear cache entries, optionally filtered by provider name.
+    ///
+    /// When `provider_filter` is `None`, all entries are removed. When
+    /// `Some(provider)`, only entries matching that provider are removed.
+    /// Returns the number of entries cleared.
+    pub fn clear_cache(&self, provider_filter: Option<&str>) -> anyhow::Result<u64> {
+        self.cache.clear(provider_filter).map(|n| n as u64)
     }
 }
 

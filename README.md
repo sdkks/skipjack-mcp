@@ -176,6 +176,14 @@ kill -SIGINT <pid>               Graceful shutdown (30s drain period)
 
 The daemon writes a PID file to `/tmp/skipjackd.pid` and listens on `/tmp/skipjackd.sock` (paths configurable).
 
+### Launch at boot (macOS)
+
+```bash
+make install-daemon-macos   # installs a launchd plist to ~/Library/LaunchAgents/
+```
+
+This creates a launchd service that starts `skipjackd --daemon` at login and keeps it alive. Logs go to `~/Library/Logs/skipjackd.log`. See `init/macos/` for the plist template.
+
 ## Docker
 
 A development Docker image is available. Not intended for production — the daemon runs as a standalone binary on the host.

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.skipjackd.daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PREFIX__/bin/skipjackd</string>
+        <string>--daemon</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>WorkingDirectory</key>
+    <string>__HOME__</string>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/skipjackd.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/skipjackd.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:__PREFIX__/bin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <key>SKIPJACKD_DAEMON__LOG_LEVEL</key>
+        <string>info</string>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+
+    <key>HardResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>4096</integer>
+    </dict>
+</dict>
+</plist>

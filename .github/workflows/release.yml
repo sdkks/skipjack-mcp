@@ -36,6 +36,10 @@ jobs:
         if: runner.os == 'macOS'
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Ad-hoc codesign (macOS)
+        if: runner.os == 'macOS'
+        run: codesign --force --deep --sign - target/${{ matrix.target }}/release/skipjackd
+
       - name: Package tarball
         run: |
           case "${{ matrix.target }}" in

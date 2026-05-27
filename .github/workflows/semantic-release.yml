@@ -22,7 +22,7 @@ jobs:
           node-version: 22
 
       - name: Install semantic-release and cargo plugin
-        run: npm install -g semantic-release @semantic-release-cargo/semantic-release-cargo @semantic-release/commit-analyzer @semantic-release/release-notes-generator
+        run: npm install -g semantic-release semantic-release-cargo @semantic-release/commit-analyzer @semantic-release/release-notes-generator
 
       - name: Run semantic-release
         env:

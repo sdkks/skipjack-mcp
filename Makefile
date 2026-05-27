@@ -1,4 +1,4 @@
-.PHONY: build test lint fix install-hooks install-pre-commit-hook install-daemon-macos check-daemon-macos restart-daemon-macos clean tap-push
+.PHONY: build test lint fix install-hooks install-pre-commit-hook install-daemon-macos check-daemon-macos restart-daemon-macos clean tap-push install-release-deps bump-version release
 
 PREFIX ?= $(HOME)/.cargo
 
@@ -73,3 +73,59 @@ clean:
 	cargo clean
 
 tap-push: lint test build
+
+install-release-deps:
+	cargo install cargo-edit 2>/dev/null || true
+	cargo install cross 2>/dev/null || true
+
+bump-version:
+	@NEXT=$$(bash scripts/version.sh); \
+	if [ -z "$$NEXT" ]; then \
+		echo "No semver-significant commits since last tag. Nothing to bump."; \
+		exit 0; \
+	fi; \
+	echo "=== Bumping version: $$(grep '^version' Cargo.toml | head -1) → $$NEXT ==="; \
+	cargo set-version $$NEXT; \
+	git add Cargo.toml Cargo.lock; \
+	git commit -m "chore: bump to v$$NEXT"; \
+	git tag -a "v$$NEXT" -m "v$$NEXT"; \
+	echo "=== Tagged v$$NEXT ==="; \
+	echo ""; \
+	echo "To push:"; \
+	echo "  git push origin main"; \
+	echo "  git push origin v$$NEXT"
+
+release: install-release-deps
+	@if [ -n "$$(git status --porcelain)" ]; then \
+		echo "ERROR: working tree is dirty. Commit or stash changes first."; \
+		git status --short; \
+		exit 1; \
+	fi
+	@NEXT=$$(bash scripts/version.sh); \
+	if [ -z "$$NEXT" ]; then \
+		echo "No semver-significant commits since last tag. Nothing to release."; \
+		exit 0; \
+	fi; \
+	echo "=== Releasing v$$NEXT ==="; \
+	$(MAKE) bump-version; \
+	echo "=== Building for all targets ==="; \
+	cross build --release --target x86_64-unknown-linux-musl; \
+	cross build --release --target aarch64-unknown-linux-musl; \
+	cargo build --release --target aarch64-apple-darwin; \
+	mkdir -p dist; \
+	tar -czf dist/skipjackd-v$$NEXT-x86_64-linux-musl.tar.gz \
+		-C target/x86_64-unknown-linux-musl/release skipjackd; \
+	tar -czf dist/skipjackd-v$$NEXT-aarch64-linux-musl.tar.gz \
+		-C target/aarch64-unknown-linux-musl/release skipjackd; \
+	tar -czf dist/skipjackd-v$$NEXT-aarch64-darwin.tar.gz \
+		-C target/aarch64-apple-darwin/release skipjackd; \
+	echo "=== Pushing tags ==="; \
+	git push origin main; \
+	git push origin "v$$NEXT"; \
+	echo "=== Creating GitHub release ==="; \
+	gh release create "v$$NEXT" \
+		--title "v$$NEXT" \
+		--notes "Release v$$NEXT" \
+		dist/*.tar.gz; \
+	rm -rf dist; \
+	echo "=== Released v$$NEXT ==="

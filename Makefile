@@ -76,7 +76,9 @@ tap-push: lint test build
 
 install-release-deps:
 	cargo install cargo-edit 2>/dev/null || true
-	cargo install cross 2>/dev/null || true
+	cargo install cargo-zigbuild 2>/dev/null || true
+	rustup target add x86_64-unknown-linux-musl 2>/dev/null || true
+	rustup target add aarch64-unknown-linux-musl 2>/dev/null || true
 
 bump-version:
 	@NEXT=$$(bash scripts/version.sh); \
@@ -108,24 +110,31 @@ release: install-release-deps
 	fi; \
 	echo "=== Releasing v$$NEXT ==="; \
 	$(MAKE) bump-version; \
-	echo "=== Building for all targets ==="; \
-	cross build --release --target x86_64-unknown-linux-musl; \
-	cross build --release --target aarch64-unknown-linux-musl; \
-	cargo build --release --target aarch64-apple-darwin; \
-	mkdir -p dist; \
-	tar -czf dist/skipjackd-v$$NEXT-x86_64-linux-musl.tar.gz \
-		-C target/x86_64-unknown-linux-musl/release skipjackd; \
-	tar -czf dist/skipjackd-v$$NEXT-aarch64-linux-musl.tar.gz \
-		-C target/aarch64-unknown-linux-musl/release skipjackd; \
-	tar -czf dist/skipjackd-v$$NEXT-aarch64-darwin.tar.gz \
-		-C target/aarch64-apple-darwin/release skipjackd; \
-	echo "=== Pushing tags ==="; \
-	git push origin main; \
-	git push origin "v$$NEXT"; \
-	echo "=== Creating GitHub release ==="; \
+	echo "=== Building for all targets ===" && \
+	cargo zigbuild --release --target x86_64-unknown-linux-musl && \
+	cargo zigbuild --release --target aarch64-unknown-linux-musl && \
+	cargo build --release --target aarch64-apple-darwin && \
+	mkdir -p dist && \
+	for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin; do \
+		binary="target/$$target/release/skipjackd"; \
+		if [ ! -f "$$binary" ]; then \
+			echo "ERROR: binary not found: $$binary"; \
+			exit 1; \
+		fi; \
+		case "$$target" in \
+			*-linux-musl) suffix=$$target;; \
+			*-apple-darwin) suffix=aarch64-darwin;; \
+		esac; \
+		tar -czf "dist/skipjackd-v$$NEXT-$$suffix.tar.gz" -C "target/$$target/release" skipjackd; \
+		echo "  packaged dist/skipjackd-v$$NEXT-$$suffix.tar.gz"; \
+	done && \
+	echo "=== Pushing tags ===" && \
+	git push origin main && \
+	git push origin "v$$NEXT" && \
+	echo "=== Creating GitHub release ===" && \
 	gh release create "v$$NEXT" \
 		--title "v$$NEXT" \
 		--notes "Release v$$NEXT" \
-		dist/*.tar.gz; \
-	rm -rf dist; \
+		dist/*.tar.gz && \
+	rm -rf dist && \
 	echo "=== Released v$$NEXT ==="

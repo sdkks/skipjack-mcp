@@ -3,6 +3,7 @@ name = "skipjackd"
 version = "0.3.0"
 edition = "2021"
 license = "MIT"
+repository = "https://github.com/sdkks/skipjack-mcp"
 description = "Multi-provider web search daemon with anti-blocking, caching, and MCP integration"
 
 [[bin]]

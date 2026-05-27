@@ -4,7 +4,4 @@ branches:
 plugins:
   - "@semantic-release/commit-analyzer"
   - "@semantic-release/release-notes-generator"
-  - - "@semantic-release-cargo/semantic-release-cargo"
-  - - "@semantic-release/github"
-    - successComment: false
-    - failComment: false
+  - "@semantic-release-cargo/semantic-release-cargo"

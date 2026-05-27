@@ -1,11 +1,12 @@
 //! MCP server integration (STORY-0007 / FR-2.1 through FR-2.8).
 //!
 //! The MCP server listens on stdio and proxies requests to the metasearch daemon
-//! via its Unix domain socket. It exposes three tools:
+//! via its Unix domain socket. It exposes four tools:
 //!
-//! - `search`       -- execute a multi-provider search
+//! - `search`         -- execute a multi-provider search
+//! - `fetch`          -- fetch a URL and return page content as markdown
 //! - `list_providers` -- list all configured providers with health status
-//! - `cache_stats`   -- retrieve cache hit/miss statistics
+//! - `cache_stats`    -- retrieve cache hit/miss statistics
 //!
 //! The server survives daemon restarts: each tool call opens a fresh connection
 //! to the daemon socket and reports `-32000` (daemon unreachable) when the

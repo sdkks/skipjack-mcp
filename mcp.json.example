@@ -3,7 +3,7 @@
     "skipjackd": {
       "command": "skipjackd",
       "args": [],
-      "description": "Multi-provider web search daemon — concurrent dispatch, caching, anti-blocking"
+      "description": "Multi-provider web search + fetch-to-markdown daemon with anti-blocking"
     }
   }
 }

@@ -56,13 +56,36 @@ skipjackd --version          Print version and git SHA
 
 ## MCP tools
 
-When running in MCP mode, three tools are exposed to the AI agent:
+When running in MCP mode, four tools are exposed to the AI agent:
 
-| Tool             | Description                                                                     |
-| ---------------- | ------------------------------------------------------------------------------- |
-| `search`         | Execute a multi-provider search with optional filters, limit, and dispatch mode |
-| `list_providers` | List all configured providers with their current health status                  |
-| `cache_stats`    | Retrieve cache hit/miss/eviction statistics                                     |
+| Tool             | Description                                                                                                          |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `search`         | Execute a multi-provider search with optional filters, limit, and dispatch mode                                      |
+| `fetch`          | Fetch a web page and return its content as markdown, with TLS/UA rotation to avoid blocking                          |
+| `list_providers` | List all configured providers with their current health status                                                       |
+| `cache_stats`    | Retrieve cache hit/miss/eviction statistics                                                                          |
+
+### Fetch tool
+
+The `fetch` tool reuses skipjackd's anti-blocking infrastructure to convert web pages to markdown. The intended workflow is `search` → pick relevant URLs → `fetch` each one for reading.
+
+| Parameter      | Required | Default | Description                         |
+| -------------- | -------- | ------- | ----------------------------------- |
+| `url`          | yes      | —       | The URL to fetch                    |
+| `timeout_secs` | no       | 15      | Per-request timeout (max 120)       |
+
+| Response field  | Type    | Description                                                      |
+| --------------- | ------- | ---------------------------------------------------------------- |
+| `url`           | string  | The fetched URL (may differ after redirects)                     |
+| `markdown`      | string  | Page content converted to markdown                               |
+| `status`        | string  | `"ok"`, `"error"`, or `"spa_detected"`                          |
+| `spa_detected`  | boolean | Whether the page appears to require JavaScript rendering         |
+| `http_status`   | integer | HTTP status code                                                 |
+| `error`         | string? | Error message (only present when status is `"error"`)            |
+
+**SPA detection:** if the page looks JavaScript-rendered (e.g., React, Vue, Next.js), the markdown will end with a machine-readable `<!-- SKIPJACKD_SPA_DETECTED: ... -->` comment block so the agent knows the content may be incomplete and can fall back to a browser-based tool (e.g., Playwright MCP).
+
+**Security:** SSRF protection blocks private IPs (RFC 1918, loopback, link-local), cloud metadata endpoints, and known internal hostnames. Redirects are re-validated at every hop. Response body is capped at 5 MB.
 
 Wire it into your MCP client by adding to `mcp.json`:
 

@@ -117,8 +117,8 @@ release: install-release-deps
 	echo "=== Releasing v$$NEXT ==="; \
 	$(MAKE) bump-version; \
 	echo "=== Building for all targets ===" && \
-	cross build --release --target x86_64-unknown-linux-musl && \
-	cross build --release --target aarch64-unknown-linux-musl && \
+	CROSS_CONTAINER_OPTS="--platform linux/amd64" cross build --release --target x86_64-unknown-linux-musl && \
+	CROSS_CONTAINER_OPTS="--platform linux/amd64" cross build --release --target aarch64-unknown-linux-musl && \
 	cargo build --release --target aarch64-apple-darwin && \
 	mkdir -p dist && \
 	for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin; do \

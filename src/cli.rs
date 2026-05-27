@@ -710,8 +710,11 @@ fn cmd_stop(
 
 /// Execute the `usage` subcommand — print a static LLM-optimized reference.
 fn cmd_usage() {
-    const USAGE_TEXT: &str = r#"
-skipjackd — Multi-provider web search daemon (v0.1.0)
+    let version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_SHA"), ")");
+
+    let usage = format!(
+        r#"
+skipjackd — Multi-provider web search daemon (v{version})
 
 SUBCOMMANDS:
 
@@ -728,14 +731,15 @@ SUBCOMMANDS:
       --freshness <WHEN>        Filter by time: day, week, month, year
       --format <FMT>            Output format: pretty (default) or json
       --dispatch-mode <MODE>    concurrent (default) or tiered
-      --config <PATH>           Path to config file
+      -c, --config <PATH>       Path to config file (global, before subcommand)
 
     Exit codes: 0 on success, non-zero on error, 2 if daemon unreachable.
 
   fetch <url> [OPTIONS]
     Fetch a URL and print its content as markdown to stdout. Uses TLS
     cipher shuffling and User-Agent rotation to avoid blocking. Pipe to
-    a file to save.
+    a file to save. SSRF-protected (private IPs and metadata endpoints
+    are blocked). SPA pages get a warning footer in the markdown.
 
     Options:
       -t, --timeout <SECS>      Per-request timeout (default: 15, max: 120)
@@ -778,23 +782,27 @@ DAEMON CONTROL:
     Start the daemon in the background. Writes PID to /tmp/skipjackd.pid,
     creates Unix socket at /tmp/skipjackd.sock.
 
-  skipjackd --daemon --config /path/to/config.toml
+  skipjackd --daemon -c /path/to/config.toml
     Start with a custom configuration file.
 
   skipjackd (no arguments)
-    Start in MCP (Model Context Protocol) server mode over stdin/stdout.
+    Start in MCP server mode over stdin/stdout. Exposes four tools:
+      search          — Multi-provider web search with anti-blocking
+      fetch           — Fetch a URL and return markdown (TLS/UA rotation)
+      list_providers  — List configured providers with health status
+      cache_stats     — Retrieve cache hit/miss/eviction statistics
 
 SOCKET PROTOCOL:
 
   The CLI communicates with the daemon over a Unix domain socket using a
   newline-delimited JSON protocol. One JSON object per line, terminated by
-  \n. The request `type` field determines the handler dispatched on the
+  \\n. The request `type` field determines the handler dispatched on the
   daemon side.
 
 CONFIGURATION:
 
   Default config: ~/.config/skipjackd/config.toml
-  Override with: --config <PATH> or SKIPJACKD_* environment variables.
+  Override with: -c <PATH> or SKIPJACKD_* environment variables.
   Env var format: SKIPJACKD_SECTION__KEY=value (double underscore for nesting).
   Example: SKIPJACKD_CACHE__DEFAULT_TTL_SECS=7200
 
@@ -803,7 +811,7 @@ CONFIGURATION:
 
 PROVIDER MODEL:
 
-  The daemon dispatches searches across configured providers:
+  Search providers:
     DuckDuckGo — HTML scraping, no API key needed
     Brave      — REST API, requires API key
     Jina AI    — REST API, requires API key
@@ -814,15 +822,22 @@ PROVIDER MODEL:
     tiered     — Execute tiers sequentially, stop when results >= limit.
   Default is concurrent. Individual providers can be selected with -p.
 
+  Fetch tool:
+    Reuses TLS cipher shuffling, User-Agent rotation, and rate limiting
+    from the daemon. SSRF-protected. SPA pages get a machine-readable
+    warning footer so agents can fall back to a JS-capable tool.
+
 FILES:
 
-  /tmp/skipjackd.pid         PID file
-  /tmp/skipjackd.sock         Unix domain socket
-  ~/.cache/skipjackd/cache.db SQLite cache
-  ~/.config/skipjackd/config.toml  Configuration
-"#;
+  /tmp/skipjackd.pid              PID file
+  /tmp/skipjackd.sock             Unix domain socket
+  ~/.cache/skipjackd/cache.db     SQLite cache
+  ~/.config/skipjackd/config.toml Configuration
+"#,
+        version = version,
+    );
 
-    println!("{}", USAGE_TEXT.trim());
+    println!("{}", usage.trim());
 }
 
 /// Execute the `providers` subcommand.

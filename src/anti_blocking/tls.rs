@@ -86,16 +86,24 @@ pub fn build_shuffled_tls_config() -> Result<rustls::ClientConfig, String> {
 
     let provider = Arc::new(provider);
 
-    // TODO_SYS_CERTS: Populate the root store with system certificates before
-    // making real connections. Example:
-    //
-    // ```ignore
-    // let mut root_store = rustls::RootCertStore::empty();
-    // for cert in rustls_native_certs::load_native_certs()? {
-    //     root_store.add(cert)?;
-    // }
-    // ```
-    let root_store = rustls::RootCertStore::empty();
+    let mut root_store = rustls::RootCertStore::empty();
+    let native_certs = rustls_native_certs::load_native_certs();
+    for cert in native_certs.certs {
+        root_store
+            .add(cert)
+            .map_err(|e| format!("failed to add root certificate: {}", e))?;
+    }
+    if root_store.is_empty() {
+        let detail = if !native_certs.errors.is_empty() {
+            format!("{:?}", native_certs.errors)
+        } else {
+            "no certificates found".into()
+        };
+        return Err(format!(
+            "failed to load system root certificates: {}",
+            detail
+        ));
+    }
 
     let config = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()

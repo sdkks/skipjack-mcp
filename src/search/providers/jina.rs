@@ -162,10 +162,10 @@ impl JinaProvider {
             .user_agent(ua)
             .default_headers(default_headers);
 
-        // TODO: Integrate TLS cipher shuffling when TASK-0007 findings are
-        // available (custom rustls::ClientConfig with reordered cipher suites).
         if client_config.tls_shuffle_ciphers {
-            builder = builder.use_rustls_tls();
+            let tls_config = crate::anti_blocking::build_shuffled_tls_config()
+                .map_err(|e| ProviderError::Internal(format!("TLS shuffle failed: {}", e)))?;
+            builder = builder.use_preconfigured_tls(tls_config);
         }
 
         let client = builder
@@ -352,10 +352,10 @@ impl Provider for JinaProvider {
             .user_agent(ua)
             .default_headers(default_headers);
 
-        // TODO: Integrate TLS cipher shuffling when TASK-0007 findings are
-        // available (custom rustls::ClientConfig with reordered cipher suites).
         if config.tls_shuffle_ciphers {
-            builder = builder.use_rustls_tls();
+            let tls_config = crate::anti_blocking::build_shuffled_tls_config()
+                .map_err(|e| ProviderError::Internal(format!("TLS shuffle failed: {}", e)))?;
+            builder = builder.use_preconfigured_tls(tls_config);
         }
 
         builder

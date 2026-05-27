@@ -126,12 +126,11 @@ impl BraveProvider {
             .pool_max_idle_per_host(2)
             .pool_idle_timeout(std::time::Duration::from_secs(90));
 
-        // Brave is a REST API provider — TLS cipher shuffling is not typically
-        // needed for API-based providers with bearer/API-key auth.
         if client_config.tls_shuffle_ciphers {
-            builder = builder.use_rustls_tls();
+            let tls_config = crate::anti_blocking::build_shuffled_tls_config()
+                .map_err(|e| ProviderError::Internal(format!("TLS shuffle failed: {}", e)))?;
+            builder = builder.use_preconfigured_tls(tls_config);
         }
-
         let client = builder
             .build()
             .map_err(|e| ProviderError::Internal(format!("failed to build HTTP client: {}", e)))?;
@@ -348,7 +347,9 @@ impl Provider for BraveProvider {
             .pool_idle_timeout(std::time::Duration::from_secs(90));
 
         if config.tls_shuffle_ciphers {
-            builder = builder.use_rustls_tls();
+            let tls_config = crate::anti_blocking::build_shuffled_tls_config()
+                .map_err(|e| ProviderError::Internal(format!("TLS shuffle failed: {}", e)))?;
+            builder = builder.use_preconfigured_tls(tls_config);
         }
 
         builder

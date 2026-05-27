@@ -286,12 +286,10 @@ pub trait Provider: Send + Sync {
             .pool_max_idle_per_host(2)
             .pool_idle_timeout(Duration::from_secs(90));
 
-        // When cipher shuffling is requested, ensure rustls is the TLS backend.
-        // Full cipher-suite ordering is handled at the anti-blocking layer by
-        // customizing rustls::ClientConfig (see FR-5.1). Here we just ensure
-        // the rustls backend is active, which is the prerequisite.
         if config.tls_shuffle_ciphers {
-            builder = builder.use_rustls_tls();
+            let tls_config = crate::anti_blocking::build_shuffled_tls_config()
+                .map_err(|e| ProviderError::Internal(format!("TLS shuffle failed: {}", e)))?;
+            builder = builder.use_preconfigured_tls(tls_config);
         }
 
         // Configure proxy: use the first proxy from the pool. Proxy rotation

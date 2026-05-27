@@ -82,6 +82,8 @@ tap-push: lint test build
 install-release-deps:
 	cargo install cargo-edit 2>/dev/null || true
 	cargo install cross 2>/dev/null || true
+	rustup toolchain add stable-x86_64-unknown-linux-gnu --profile minimal --force-non-host 2>/dev/null || true
+	rustup toolchain add stable-aarch64-unknown-linux-gnu --profile minimal --force-non-host 2>/dev/null || true
 	rustup target add aarch64-apple-darwin 2>/dev/null || true
 
 bump-version:

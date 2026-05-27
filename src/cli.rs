@@ -24,6 +24,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 use crate::config::Config;
+use crate::daemon::protocol::MAX_FETCH_TIMEOUT_SECS;
 use crate::daemon::{ProviderInfo, Request, Response};
 use crate::search::{Freshness, SearchRequest};
 
@@ -131,6 +132,24 @@ enum Commands {
         /// If set, only clear cache entries from this provider.
         #[arg(short = 'p', long)]
         provider: Option<String>,
+    },
+
+    /// Fetch a URL and print its content as markdown.
+    ///
+    /// Connects to the daemon, fetches the URL with TLS cipher shuffling
+    /// and User-Agent rotation, converts the HTML to markdown, and prints
+    /// it to stdout. Pipe to a file to save the output.
+    Fetch {
+        /// The URL to fetch.
+        url: String,
+
+        /// Per-request timeout in seconds (default: 15, max: 120).
+        #[arg(short = 't', long = "timeout", default_value = "15")]
+        timeout_secs: u64,
+
+        /// Output raw JSON instead of markdown.
+        #[arg(long, default_value_t = false, action = clap::ArgAction::SetTrue)]
+        json: bool,
     },
 }
 
@@ -261,6 +280,11 @@ pub async fn run() -> anyhow::Result<()> {
         }
         Commands::Providers => cmd_providers(&socket_path).await,
         Commands::CacheClear { provider } => cmd_cache_clear(&socket_path, provider).await,
+        Commands::Fetch {
+            url,
+            timeout_secs,
+            json,
+        } => cmd_fetch(&socket_path, url, timeout_secs, json).await,
     }
 }
 
@@ -708,6 +732,17 @@ SUBCOMMANDS:
 
     Exit codes: 0 on success, non-zero on error, 2 if daemon unreachable.
 
+  fetch <url> [OPTIONS]
+    Fetch a URL and print its content as markdown to stdout. Uses TLS
+    cipher shuffling and User-Agent rotation to avoid blocking. Pipe to
+    a file to save.
+
+    Options:
+      -t, --timeout <SECS>      Per-request timeout (default: 15, max: 120)
+      --json                    Output raw JSON instead of markdown
+
+    Exit codes: 0 on success, non-zero on error (including HTTP errors).
+
   status
     Print daemon health, provider statuses, and cache stats in a table.
     Fetches Health + ProviderStatus + CacheStats from the daemon.
@@ -819,6 +854,68 @@ async fn cmd_cache_clear(
             Ok(())
         }
         other => bail!("unexpected response type for CacheClear: {:?}", other),
+    }
+}
+
+/// Execute the `fetch` subcommand — fetch a URL and print the page as markdown.
+async fn cmd_fetch(
+    socket_path: &std::path::Path,
+    url: String,
+    timeout_secs: u64,
+    json: bool,
+) -> anyhow::Result<()> {
+    if timeout_secs > MAX_FETCH_TIMEOUT_SECS {
+        bail!(
+            "timeout {}s exceeds maximum allowed ({})",
+            timeout_secs,
+            MAX_FETCH_TIMEOUT_SECS
+        );
+    }
+
+    let request = Request::Fetch { url, timeout_secs };
+    let response = send_request(socket_path, &request).await?;
+    let response = check_response_error(response)?;
+
+    match response {
+        Response::FetchResult {
+            url: final_url,
+            markdown,
+            status,
+            spa_detected,
+            http_status,
+            error,
+        } => {
+            if json {
+                let output = serde_json::json!({
+                    "url": final_url,
+                    "markdown": markdown,
+                    "status": status,
+                    "spa_detected": spa_detected,
+                    "http_status": http_status,
+                    "error": error,
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&output)
+                        .unwrap_or_else(|e| format!("{{ \"error\": \"{}\" }}", e))
+                );
+            } else {
+                if status == "error" {
+                    let err_msg = error.as_deref().unwrap_or("unknown error");
+                    bail!("fetch failed (HTTP {}): {}", http_status, err_msg);
+                }
+                if spa_detected {
+                    eprintln!(
+                        "warning: SPA detected — content may be incomplete \
+                         (see footer in markdown)"
+                    );
+                }
+                eprintln!("{} (HTTP {}, {})", final_url, http_status, status);
+                println!("{}", markdown);
+            }
+            Ok(())
+        }
+        other => bail!("unexpected response type for Fetch: {:?}", other),
     }
 }
 
@@ -1004,6 +1101,27 @@ mod tests {
         assert!(
             cli.is_ok(),
             "cache-clear with provider should parse: {:?}",
+            cli.err()
+        );
+    }
+
+    /// fetch subcommand should parse with url and optional flags.
+    #[test]
+    fn test_cli_parse_fetch() {
+        let cli = Cli::try_parse_from(["skipjackd", "fetch", "https://example.com"]);
+        assert!(cli.is_ok(), "minimal fetch should parse: {:?}", cli.err());
+
+        let cli = Cli::try_parse_from([
+            "skipjackd",
+            "fetch",
+            "https://example.com",
+            "--timeout",
+            "30",
+            "--json",
+        ]);
+        assert!(
+            cli.is_ok(),
+            "fetch with flags should parse: {:?}",
             cli.err()
         );
     }

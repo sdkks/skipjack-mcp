@@ -46,6 +46,10 @@ skipjackd search <query>     Run a web search
   --format <fmt>               pretty (default) or json
   --dispatch-mode <mode>       concurrent (default) or tiered
 
+skipjackd fetch <url>        Fetch a URL and print the page as markdown
+  -t, --timeout <secs>         Per-request timeout (default: 15, max: 120)
+  --json                       Output raw JSON instead of markdown
+
 skipjackd status             Show daemon health and connected providers
 skipjackd stop               Gracefully shut down the daemon
 skipjackd providers          List configured providers

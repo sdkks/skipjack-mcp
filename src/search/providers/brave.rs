@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
 
-use crate::anti_blocking::RateLimiter;
+use crate::anti_blocking::{RateLimiter, RotatingClient};
 use crate::search::provider::{Provider, ProviderClientConfig, ProviderError};
 use crate::search::{SearchRequest, SearchResponse, SearchResult, Tag};
 
@@ -75,6 +75,7 @@ struct BraveWebResult {
 ///     ipv6_subnet: None,
 ///     proxies: None,
 ///     timeout_secs: Some(15),
+///     tls_rotate_every: None,
 /// };
 /// let limiter = Arc::new(RateLimiter::new());
 /// let provider = BraveProvider::new(
@@ -90,8 +91,8 @@ struct BraveWebResult {
 pub struct BraveProvider {
     /// Whether this provider is configured and has a valid API key.
     available: bool,
-    /// Pre-built HTTP client with timeout configuration.
-    client: Client,
+    /// Rotating HTTP client with timeout configuration.
+    http: RotatingClient,
     /// Base URL for the Brave web search API endpoint.
     base_url: String,
     /// API key used in the `X-Subscription-Token` header.
@@ -119,27 +120,37 @@ impl BraveProvider {
         api_key: Option<String>,
     ) -> Result<Self, ProviderError> {
         let timeout_secs = client_config.timeout_secs.unwrap_or(30);
+        let tls_shuffle = client_config.tls_shuffle_ciphers;
+        let rotate_every = client_config.tls_rotate_every.unwrap_or(0);
 
-        let mut builder = Client::builder()
-            .timeout(std::time::Duration::from_secs(timeout_secs))
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .pool_max_idle_per_host(2)
-            .pool_idle_timeout(std::time::Duration::from_secs(90));
+        let build_fn: Box<dyn Fn() -> Result<Client, ProviderError> + Send + Sync> =
+            Box::new(move || {
+                let mut builder = Client::builder()
+                    .timeout(std::time::Duration::from_secs(timeout_secs))
+                    .connect_timeout(std::time::Duration::from_secs(10))
+                    .pool_max_idle_per_host(2)
+                    .pool_idle_timeout(std::time::Duration::from_secs(90));
 
-        if client_config.tls_shuffle_ciphers {
-            let tls_config = crate::anti_blocking::build_shuffled_tls_config()
-                .map_err(|e| ProviderError::Internal(format!("TLS shuffle failed: {}", e)))?;
-            builder = builder.use_preconfigured_tls(tls_config);
-        }
-        let client = builder
-            .build()
-            .map_err(|e| ProviderError::Internal(format!("failed to build HTTP client: {}", e)))?;
+                if tls_shuffle {
+                    let tls_config =
+                        crate::anti_blocking::build_shuffled_tls_config().map_err(|e| {
+                            ProviderError::Internal(format!("TLS shuffle failed: {}", e))
+                        })?;
+                    builder = builder.use_preconfigured_tls(tls_config);
+                }
+
+                builder.build().map_err(|e| {
+                    ProviderError::Internal(format!("failed to build HTTP client: {}", e))
+                })
+            });
+
+        let http = RotatingClient::new(rotate_every, build_fn)?;
 
         let available = api_key.is_some();
 
         Ok(BraveProvider {
             available,
-            client,
+            http,
             base_url: BRAVE_API_BASE_URL.to_string(),
             api_key,
             rate_limiter,
@@ -277,7 +288,8 @@ impl Provider for BraveProvider {
         }
 
         let response = self
-            .client
+            .http
+            .client()
             .get(&self.base_url)
             .header("X-Subscription-Token", api_key)
             .header("Accept", "application/json")
@@ -537,6 +549,7 @@ mod tests {
             ipv6_subnet: None,
             proxies: None,
             timeout_secs: Some(10),
+            tls_rotate_every: None,
         };
         let limiter = Arc::new(RateLimiter::new());
         let provider =
@@ -555,6 +568,7 @@ mod tests {
             ipv6_subnet: None,
             proxies: None,
             timeout_secs: Some(10),
+            tls_rotate_every: None,
         };
         let limiter = Arc::new(RateLimiter::new());
 
@@ -581,6 +595,7 @@ mod tests {
             ipv6_subnet: None,
             proxies: None,
             timeout_secs: Some(10),
+            tls_rotate_every: None,
         };
         let limiter = Arc::new(RateLimiter::new());
         let provider = BraveProvider::new(&config, limiter, DEFAULT_BRAVE_RPM, Some("key".into()))
@@ -600,6 +615,7 @@ mod tests {
             ipv6_subnet: None,
             proxies: None,
             timeout_secs: Some(10),
+            tls_rotate_every: None,
         };
         let limiter = Arc::new(RateLimiter::new());
         let provider = BraveProvider::new(&config, limiter, DEFAULT_BRAVE_RPM, Some("key".into()))
@@ -618,6 +634,7 @@ mod tests {
             ipv6_subnet: None,
             proxies: None,
             timeout_secs: Some(10),
+            tls_rotate_every: None,
         };
         let limiter = Arc::new(RateLimiter::new());
         let provider = BraveProvider::new(&config, limiter, DEFAULT_BRAVE_RPM, Some("key".into()))
@@ -640,6 +657,7 @@ mod tests {
             ipv6_subnet: None,
             proxies: None,
             timeout_secs: Some(10),
+            tls_rotate_every: None,
         };
         let limiter = Arc::new(RateLimiter::new());
         let provider =

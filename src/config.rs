@@ -323,6 +323,10 @@ pub struct ProviderConfig {
     pub retry_max_attempts: Option<u32>,
     /// Semantic tags for provider categorization.
     pub tags: Option<Vec<String>>,
+    /// Rotate TLS client (rebuild with fresh shuffled ciphers) every N requests.
+    /// None or Some(0) means never rotate.
+    #[serde(default)]
+    pub tls_rotate_every: Option<usize>,
 }
 
 impl Default for ProviderConfig {
@@ -343,6 +347,7 @@ impl Default for ProviderConfig {
             rate_limit_rpm: None,
             retry_max_attempts: None,
             tags: None,
+            tls_rotate_every: None,
         }
     }
 }

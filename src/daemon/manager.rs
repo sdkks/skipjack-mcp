@@ -359,6 +359,7 @@ impl Manager {
                 ipv6_subnet: provider_cfg.ipv6_subnet.clone(),
                 proxies: provider_cfg.proxies.clone(),
                 timeout_secs: provider_cfg.timeout_secs,
+                tls_rotate_every: provider_cfg.tls_rotate_every,
             };
 
             let rpm = provider_cfg.rate_limit_rpm.unwrap_or(30);

@@ -7,6 +7,7 @@ pub mod agents;
 pub mod ip_rotation;
 pub mod rate_limiter;
 pub mod retry;
+pub mod rotating_client;
 pub mod tls;
 
 // Re-export the key public API for convenience.
@@ -17,4 +18,5 @@ pub use ip_rotation::{
 };
 pub use rate_limiter::RateLimiter;
 pub use retry::{retry_with_backoff, ClassifyRetry, RetryConfig};
+pub use rotating_client::RotatingClient;
 pub use tls::{build_shuffled_tls_config, can_shuffle_ciphers};

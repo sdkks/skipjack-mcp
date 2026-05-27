@@ -6,7 +6,7 @@ use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYP
 use reqwest::Client;
 use serde::Deserialize;
 
-use crate::anti_blocking::{RateLimiter, UserAgentPool};
+use crate::anti_blocking::{RateLimiter, RotatingClient, UserAgentPool};
 use crate::search::provider::{Provider, ProviderClientConfig, ProviderError};
 use crate::search::{SearchRequest, SearchResponse, SearchResult, Tag};
 
@@ -87,6 +87,7 @@ struct JinaResult {
 ///     ipv6_subnet: None,
 ///     proxies: None,
 ///     timeout_secs: Some(15),
+///     tls_rotate_every: None,
 /// };
 /// let limiter = Arc::new(RateLimiter::new());
 /// let provider = JinaProvider::new(
@@ -103,8 +104,8 @@ struct JinaResult {
 pub struct JinaProvider {
     /// Whether this provider is configured and enabled (API key present).
     available: bool,
-    /// Pre-built HTTP client with User-Agent, auth header, and timeout configuration.
-    client: Client,
+    /// Rotating HTTP client with User-Agent, auth header, and timeout configuration.
+    http: RotatingClient,
     /// Base URL for the Jina AI search endpoint.
     base_url: String,
     /// The API key sent in the Authorization header.
@@ -138,43 +139,56 @@ impl JinaProvider {
         api_key: Option<String>,
         base_url: Option<String>,
     ) -> Result<Self, ProviderError> {
-        let ua = UserAgentPool::random_ua();
         let timeout_secs = client_config.timeout_secs.unwrap_or(30);
+        let tls_shuffle = client_config.tls_shuffle_ciphers;
+        let rotate_every = client_config.tls_rotate_every.unwrap_or(0);
         let base_url = base_url.unwrap_or_else(|| JINA_DEFAULT_BASE_URL.to_string());
 
         let available = matches!(api_key.as_deref(), Some(key) if !key.is_empty());
         let api_key = api_key.unwrap_or_default();
+        let api_key_for_closure = api_key.clone();
+        let available_for_closure = available;
 
-        let mut default_headers = HeaderMap::new();
-        if available {
-            let auth_value = format!("Bearer {}", api_key);
-            let auth_header = HeaderValue::from_str(&auth_value)
-                .map_err(|e| ProviderError::Internal(format!("invalid API key: {}", e)))?;
-            default_headers.insert(AUTHORIZATION, auth_header);
-            default_headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        }
+        let build_fn: Box<dyn Fn() -> Result<Client, ProviderError> + Send + Sync> =
+            Box::new(move || {
+                let ua = UserAgentPool::random_ua();
 
-        let mut builder = Client::builder()
-            .timeout(std::time::Duration::from_secs(timeout_secs))
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .pool_max_idle_per_host(2)
-            .pool_idle_timeout(std::time::Duration::from_secs(90))
-            .user_agent(ua)
-            .default_headers(default_headers);
+                let mut default_headers = HeaderMap::new();
+                if available_for_closure {
+                    let auth_value = format!("Bearer {}", api_key_for_closure);
+                    let auth_header = HeaderValue::from_str(&auth_value)
+                        .map_err(|e| ProviderError::Internal(format!("invalid API key: {}", e)))?;
+                    default_headers.insert(AUTHORIZATION, auth_header);
+                    default_headers
+                        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+                }
 
-        if client_config.tls_shuffle_ciphers {
-            let tls_config = crate::anti_blocking::build_shuffled_tls_config()
-                .map_err(|e| ProviderError::Internal(format!("TLS shuffle failed: {}", e)))?;
-            builder = builder.use_preconfigured_tls(tls_config);
-        }
+                let mut builder = Client::builder()
+                    .timeout(std::time::Duration::from_secs(timeout_secs))
+                    .connect_timeout(std::time::Duration::from_secs(10))
+                    .pool_max_idle_per_host(2)
+                    .pool_idle_timeout(std::time::Duration::from_secs(90))
+                    .user_agent(ua)
+                    .default_headers(default_headers);
 
-        let client = builder
-            .build()
-            .map_err(|e| ProviderError::Internal(format!("failed to build HTTP client: {}", e)))?;
+                if tls_shuffle {
+                    let tls_config =
+                        crate::anti_blocking::build_shuffled_tls_config().map_err(|e| {
+                            ProviderError::Internal(format!("TLS shuffle failed: {}", e))
+                        })?;
+                    builder = builder.use_preconfigured_tls(tls_config);
+                }
+
+                builder.build().map_err(|e| {
+                    ProviderError::Internal(format!("failed to build HTTP client: {}", e))
+                })
+            });
+
+        let http = RotatingClient::new(rotate_every, build_fn)?;
 
         Ok(JinaProvider {
             available,
-            client,
+            http,
             base_url,
             api_key,
             rate_limiter,
@@ -271,7 +285,8 @@ impl Provider for JinaProvider {
         })?;
 
         let response = self
-            .client
+            .http
+            .client()
             .post(&self.base_url)
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
@@ -489,6 +504,7 @@ mod tests {
             ipv6_subnet: None,
             proxies: None,
             timeout_secs: Some(10),
+            tls_rotate_every: None,
         };
         let limiter = Arc::new(RateLimiter::new());
         let provider = JinaProvider::new(
@@ -512,6 +528,7 @@ mod tests {
             ipv6_subnet: None,
             proxies: None,
             timeout_secs: Some(10),
+            tls_rotate_every: None,
         };
         let limiter = Arc::new(RateLimiter::new());
 
@@ -535,6 +552,7 @@ mod tests {
             ipv6_subnet: None,
             proxies: None,
             timeout_secs: Some(10),
+            tls_rotate_every: None,
         };
         let limiter = Arc::new(RateLimiter::new());
 
@@ -552,6 +570,7 @@ mod tests {
             ipv6_subnet: None,
             proxies: None,
             timeout_secs: Some(10),
+            tls_rotate_every: None,
         };
         let limiter = Arc::new(RateLimiter::new());
 
@@ -575,6 +594,7 @@ mod tests {
             ipv6_subnet: None,
             proxies: None,
             timeout_secs: Some(10),
+            tls_rotate_every: None,
         };
         let limiter = Arc::new(RateLimiter::new());
         let provider = JinaProvider::new(
@@ -600,6 +620,7 @@ mod tests {
             ipv6_subnet: None,
             proxies: None,
             timeout_secs: Some(10),
+            tls_rotate_every: None,
         };
         let limiter = Arc::new(RateLimiter::new());
         let provider = JinaProvider::new(
@@ -623,6 +644,7 @@ mod tests {
             ipv6_subnet: None,
             proxies: None,
             timeout_secs: Some(10),
+            tls_rotate_every: None,
         };
         let limiter = Arc::new(RateLimiter::new());
         let provider = JinaProvider::new(

@@ -30,6 +30,9 @@ pub struct ProviderClientConfig {
     /// Per-provider request timeout override in seconds. Falls back to the
     /// global default (30 s) when `None`.
     pub timeout_secs: Option<u64>,
+    /// Rotate TLS client (rebuild with fresh shuffled ciphers) every N requests.
+    /// None or Some(0) means never rotate.
+    pub tls_rotate_every: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------

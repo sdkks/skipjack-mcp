@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use scraper::{Html, Selector};
 
-use crate::anti_blocking::{RateLimiter, UserAgentPool};
+use crate::anti_blocking::{RateLimiter, RotatingClient, UserAgentPool};
 use crate::search::provider::{Provider, ProviderClientConfig, ProviderError};
 use crate::search::{SearchRequest, SearchResponse, SearchResult, Tag};
 
@@ -64,6 +64,7 @@ const DEFAULT_DDG_RPM: u32 = 30;
 ///     ipv6_subnet: None,
 ///     proxies: None,
 ///     timeout_secs: Some(15),
+///     tls_rotate_every: None,
 /// };
 /// let limiter = Arc::new(RateLimiter::new());
 /// let provider = DuckDuckGoProvider::new(&config, limiter, 30, true).unwrap();
@@ -74,8 +75,8 @@ const DEFAULT_DDG_RPM: u32 = 30;
 pub struct DuckDuckGoProvider {
     /// Whether this provider is configured and enabled.
     available: bool,
-    /// Pre-built HTTP client with User-Agent and timeout configuration.
-    client: Client,
+    /// Rotating HTTP client with User-Agent and TLS cipher rotation.
+    http: RotatingClient,
     /// Base URL for the HTML search endpoint.
     base_url: String,
     /// Shared rate limiter used across all providers.
@@ -100,29 +101,38 @@ impl DuckDuckGoProvider {
         rpm: u32,
         available: bool,
     ) -> Result<Self, ProviderError> {
-        let ua = UserAgentPool::random_ua();
         let timeout_secs = client_config.timeout_secs.unwrap_or(30);
+        let tls_shuffle = client_config.tls_shuffle_ciphers;
+        let rotate_every = client_config.tls_rotate_every.unwrap_or(0);
 
-        let mut builder = Client::builder()
-            .timeout(std::time::Duration::from_secs(timeout_secs))
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .pool_max_idle_per_host(2)
-            .pool_idle_timeout(std::time::Duration::from_secs(90))
-            .user_agent(ua);
+        let build_fn: Box<dyn Fn() -> Result<Client, ProviderError> + Send + Sync> =
+            Box::new(move || {
+                let ua = UserAgentPool::random_ua();
+                let mut builder = Client::builder()
+                    .timeout(std::time::Duration::from_secs(timeout_secs))
+                    .connect_timeout(std::time::Duration::from_secs(10))
+                    .pool_max_idle_per_host(2)
+                    .pool_idle_timeout(std::time::Duration::from_secs(90))
+                    .user_agent(ua);
 
-        if client_config.tls_shuffle_ciphers {
-            let tls_config = crate::anti_blocking::build_shuffled_tls_config()
-                .map_err(|e| ProviderError::Internal(format!("TLS shuffle failed: {}", e)))?;
-            builder = builder.use_preconfigured_tls(tls_config);
-        }
+                if tls_shuffle {
+                    let tls_config =
+                        crate::anti_blocking::build_shuffled_tls_config().map_err(|e| {
+                            ProviderError::Internal(format!("TLS shuffle failed: {}", e))
+                        })?;
+                    builder = builder.use_preconfigured_tls(tls_config);
+                }
 
-        let client = builder
-            .build()
-            .map_err(|e| ProviderError::Internal(format!("failed to build HTTP client: {}", e)))?;
+                builder.build().map_err(|e| {
+                    ProviderError::Internal(format!("failed to build HTTP client: {}", e))
+                })
+            });
+
+        let http = RotatingClient::new(rotate_every, build_fn)?;
 
         Ok(DuckDuckGoProvider {
             available,
-            client,
+            http,
             base_url: DUCKDUCKGO_HTML_BASE_URL.to_string(),
             rate_limiter,
             rpm,
@@ -256,7 +266,8 @@ impl Provider for DuckDuckGoProvider {
         let params = [("q", request.query.as_str())];
 
         let response = self
-            .client
+            .http
+            .client()
             .post(&self.base_url)
             .form(&params)
             .send()
@@ -451,6 +462,7 @@ mod tests {
             ipv6_subnet: None,
             proxies: None,
             timeout_secs: Some(10),
+            tls_rotate_every: None,
         };
         let limiter = Arc::new(RateLimiter::new());
         let provider = DuckDuckGoProvider::new(&config, limiter, DEFAULT_DDG_RPM, true)
@@ -468,6 +480,7 @@ mod tests {
             ipv6_subnet: None,
             proxies: None,
             timeout_secs: Some(10),
+            tls_rotate_every: None,
         };
         let limiter = Arc::new(RateLimiter::new());
 
@@ -489,6 +502,7 @@ mod tests {
             ipv6_subnet: None,
             proxies: None,
             timeout_secs: Some(10),
+            tls_rotate_every: None,
         };
         let limiter = Arc::new(RateLimiter::new());
         let provider =
@@ -509,6 +523,7 @@ mod tests {
             ipv6_subnet: None,
             proxies: None,
             timeout_secs: Some(10),
+            tls_rotate_every: None,
         };
         let limiter = Arc::new(RateLimiter::new());
         let provider =

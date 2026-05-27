@@ -40,11 +40,16 @@ check-daemon-macos:
 restart-daemon-macos:
 	@echo "stopping..."
 	@launchctl bootout gui/$$(id -u)/com.skipjackd.daemon 2>/dev/null || true
-	@sleep 2
+	@echo "waiting for daemon to exit..."
+	@for i in $$(seq 1 20); do \
+		pgrep -f skipjackd >/dev/null 2>&1 || break; \
+		sleep 0.5; \
+	done
 	@rm -f /tmp/skipjackd.sock /tmp/skipjackd.pid
 	@echo "starting..."
 	@launchctl bootstrap gui/$$(id -u) $(HOME)/Library/LaunchAgents/com.skipjackd.daemon.plist
-	@sleep 2
+	@echo "waiting for daemon to be ready..."
+	@until skipjackd status >/dev/null 2>&1; do sleep 0.5; done
 	@echo ""
 	@$(MAKE) --no-print-directory check-daemon-macos
 

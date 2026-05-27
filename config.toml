@@ -80,13 +80,20 @@ window_days = 7
 # Each [[providers]] table configures one search provider.
 # Required fields: name, enabled
 # Optional: api_key, api_key_env, base_url, timeout_secs, weight,
-#           cache_ttl_secs, tls_shuffle_ciphers, ip_rotation_strategy,
-#           ipv6_subnet, proxies, rate_limit_rpm, retry_max_attempts, tags
+#           cache_ttl_secs, tls_shuffle_ciphers, tls_rotate_every,
+#           ip_rotation_strategy, ipv6_subnet, proxies, rate_limit_rpm,
+#           retry_max_attempts, tags
 
 [[providers]]
 name = "duckduckgo"
 enabled = true
+# tls_shuffle_ciphers reorders TLS cipher suites on client construction
+# to produce a non-default JA3 fingerprint. Requires rustls.
 tls_shuffle_ciphers = true
+# tls_rotate_every rebuilds the HTTP client with a fresh shuffled cipher
+# order every N requests (0 or omitted = never rotate). Per-provider;
+# each provider tracks its own request counter independently.
+tls_rotate_every = 5
 ip_rotation_strategy = "static"
 rate_limit_rpm = 30
 retry_max_attempts = 2
@@ -98,6 +105,7 @@ enabled = true
 api_key_env = "JINA_API_KEY"
 base_url = "https://s.jina.ai"
 timeout_secs = 15
+tls_rotate_every = 5
 ip_rotation_strategy = "ipv6_pool"
 ipv6_subnet = "2001:db8::/64"
 rate_limit_rpm = 100
@@ -107,6 +115,7 @@ tags = ["web"]
 name = "brave"
 enabled = true
 api_key_env = "BRAVE_API_KEY"
+tls_rotate_every = 5
 rate_limit_rpm = 20
 retry_max_attempts = 3
 tags = ["web"]
@@ -118,6 +127,7 @@ enabled = true
 # Set to your SearXNG instance URL (HTTP or HTTPS):
 # base_url = "http://localhost:8080"
 # base_url = "https://search.example.com"
+tls_rotate_every = 5
 rate_limit_rpm = 20
 tags = ["web", "privacy"]
 

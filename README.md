@@ -230,6 +230,22 @@ VERSION=0.1.0 sh install.sh
 
 Binaries are installed to `~/.local/bin`.
 
+### macOS: Gatekeeper quarantine
+
+Downloaded binaries are quarantined by macOS and blocked from running. After downloading, clear the quarantine flag:
+
+```bash
+xattr -dr com.apple.quarantine skipjackd
+```
+
+Or skip the downloaded binary entirely and build from source instead:
+
+```bash
+cargo install --git https://github.com/sdkks/skipjack-mcp
+```
+
+This compiles skipjackd locally and installs it to `~/.cargo/bin` — no quarantine applies.
+
 ## Build
 
 ```bash

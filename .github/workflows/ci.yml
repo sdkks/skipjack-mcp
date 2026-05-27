@@ -10,8 +10,28 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  test:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Run tests
+        run: cargo test
+
   build:
     name: Build (${{ matrix.target }})
+    needs: test
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -19,38 +39,23 @@ jobs:
         include:
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
-            cross: true
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
-            cross: true
           - target: aarch64-apple-darwin
             os: macos-latest
-            cross: false
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Build (linux musl via cross)
+        if: runner.os == 'Linux'
+        uses: houseabsolute/actions-rust-cross@v1
         with:
-          targets: ${{ matrix.target }}
+          command: build
+          target: ${{ matrix.target }}
+          args: "--locked --release"
+          strip: true
 
-      - name: Install cross (musl targets)
-        if: matrix.cross
-        run: cargo install cross
-
-      - name: Check formatting
-        run: cargo fmt --check
-
-      - name: Clippy (host target)
-        run: cargo clippy -- -D warnings
-
-      - name: Run tests (host target)
-        run: cargo test
-
-      - name: Build release
-        if: ${{ !matrix.cross }}
+      - name: Build (macOS native)
+        if: runner.os == 'macOS'
         run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Build release (musl via cross)
-        if: matrix.cross
-        run: cross build --release --target ${{ matrix.target }}

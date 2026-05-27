@@ -39,6 +39,7 @@ rand = "0.8"
 bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
+html-to-markdown-rs = "3"
 libc = "0.2"
 ipnet = "2"
 

@@ -74,10 +74,28 @@ pub enum Request {
     #[serde(rename = "Health")]
     Health,
 
+    /// Fetch a URL and return page content converted to markdown.
+    #[serde(rename = "Fetch")]
+    Fetch {
+        /// The URL to fetch.
+        url: String,
+        /// Per-request timeout in seconds (default 15).
+        #[serde(default = "default_fetch_timeout")]
+        timeout_secs: u64,
+    },
+
     /// Gracefully shut down the daemon.
     #[serde(rename = "Shutdown")]
     Shutdown,
 }
+
+/// Default timeout for fetch requests: 15 seconds.
+pub const fn default_fetch_timeout() -> u64 {
+    15
+}
+
+/// Maximum allowed fetch timeout in seconds.
+pub const MAX_FETCH_TIMEOUT_SECS: u64 = 120;
 
 // ---------------------------------------------------------------------------
 // Response enum
@@ -160,6 +178,24 @@ pub enum Response {
         message: String,
         /// Optional additional error data.
         data: Option<serde_json::Value>,
+    },
+
+    /// Successful fetch response with page content as markdown.
+    #[serde(rename = "FetchResult")]
+    FetchResult {
+        /// The final URL after redirects.
+        url: String,
+        /// Page content converted to markdown.
+        markdown: String,
+        /// "ok", "error", or "spa_detected".
+        status: String,
+        /// Whether SPA heuristics triggered.
+        spa_detected: bool,
+        /// HTTP status code.
+        http_status: u16,
+        /// Error message if status is "error".
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     },
 
     /// Acknowledgment that the daemon is shutting down.
@@ -269,6 +305,13 @@ mod tests {
                     provider: Some("test".into()),
                 },
             ),
+            (
+                "Fetch",
+                Request::Fetch {
+                    url: "https://example.com".into(),
+                    timeout_secs: 15,
+                },
+            ),
             ("Health", Request::Health),
             ("Shutdown", Request::Shutdown),
         ];
@@ -363,6 +406,162 @@ mod tests {
         assert_eq!(parsed.name, "duckduckgo");
         assert_eq!(parsed.tags.len(), 2);
         assert!(parsed.healthy);
+    }
+
+    /// FetchResult should round-trip through JSON for the "ok" status.
+    #[test]
+    fn fetch_result_roundtrip_ok() {
+        let resp = Response::FetchResult {
+            url: "https://example.com".into(),
+            markdown: "# Hello\n\nWorld".into(),
+            status: "ok".into(),
+            spa_detected: false,
+            http_status: 200,
+            error: None,
+        };
+        let json = serde_json::to_string(&resp).expect("serialize FetchResult ok");
+        let parsed: Response = serde_json::from_str(&json).expect("deserialize FetchResult ok");
+        match parsed {
+            Response::FetchResult {
+                url,
+                markdown,
+                status,
+                spa_detected,
+                http_status,
+                error,
+            } => {
+                assert_eq!(url, "https://example.com");
+                assert_eq!(markdown, "# Hello\n\nWorld");
+                assert_eq!(status, "ok");
+                assert!(!spa_detected);
+                assert_eq!(http_status, 200);
+                assert!(error.is_none());
+            }
+            _ => panic!("expected FetchResult"),
+        }
+    }
+
+    /// FetchResult with spa_detected should round-trip.
+    #[test]
+    fn fetch_result_roundtrip_spa_detected() {
+        let resp = Response::FetchResult {
+            url: "https://spa.example.com".into(),
+            markdown: "<!-- SKIPJACKD_SPA_DETECTED: ... -->".into(),
+            status: "spa_detected".into(),
+            spa_detected: true,
+            http_status: 200,
+            error: None,
+        };
+        let json = serde_json::to_string(&resp).expect("serialize FetchResult spa");
+        let parsed: Response = serde_json::from_str(&json).expect("deserialize FetchResult spa");
+        match parsed {
+            Response::FetchResult {
+                status,
+                spa_detected,
+                ..
+            } => {
+                assert_eq!(status, "spa_detected");
+                assert!(spa_detected);
+            }
+            _ => panic!("expected FetchResult"),
+        }
+    }
+
+    /// FetchResult with error status should round-trip.
+    #[test]
+    fn fetch_result_roundtrip_error() {
+        let resp = Response::FetchResult {
+            url: "https://error.example.com".into(),
+            markdown: String::new(),
+            status: "error".into(),
+            spa_detected: false,
+            http_status: 500,
+            error: Some("Internal Server Error".into()),
+        };
+        let json = serde_json::to_string(&resp).expect("serialize FetchResult error");
+        let parsed: Response = serde_json::from_str(&json).expect("deserialize FetchResult error");
+        match parsed {
+            Response::FetchResult {
+                status,
+                http_status,
+                error,
+                ..
+            } => {
+                assert_eq!(status, "error");
+                assert_eq!(http_status, 500);
+                assert_eq!(error.as_deref(), Some("Internal Server Error"));
+            }
+            _ => panic!("expected FetchResult"),
+        }
+    }
+
+    /// Request::Fetch should serialize with correct type field and default timeout.
+    #[test]
+    fn fetch_request_type_field() {
+        let req = Request::Fetch {
+            url: "https://example.com".into(),
+            timeout_secs: 15,
+        };
+        let json = serde_json::to_string(&req).expect("serialize Fetch");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse as generic JSON");
+        assert_eq!(
+            value["type"].as_str().unwrap(),
+            "Fetch",
+            "expected type=Fetch in: {}",
+            json
+        );
+        assert_eq!(value["url"].as_str().unwrap(), "https://example.com");
+        assert_eq!(value["timeout_secs"].as_u64().unwrap(), 15);
+    }
+
+    /// Request::Fetch with explicit timeout should serialize correctly.
+    #[test]
+    fn fetch_request_explicit_timeout() {
+        let req = Request::Fetch {
+            url: "https://example.com".into(),
+            timeout_secs: 30,
+        };
+        let json = serde_json::to_string(&req).expect("serialize Fetch");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse as generic JSON");
+        assert_eq!(value["timeout_secs"].as_u64().unwrap(), 30);
+    }
+
+    /// Deserializing Request::Fetch with missing timeout_secs should use default.
+    #[test]
+    fn fetch_request_default_timeout_on_deserialize() {
+        let json = r#"{"type":"Fetch","url":"https://example.com"}"#;
+        let req: Request = serde_json::from_str(json).expect("deserialize Fetch without timeout");
+        match req {
+            Request::Fetch { url, timeout_secs } => {
+                assert_eq!(url, "https://example.com");
+                assert_eq!(timeout_secs, 15);
+            }
+            _ => panic!("expected Fetch variant"),
+        }
+    }
+
+    /// Deserializing Response::FetchResult from JSON should infer the variant.
+    #[test]
+    fn deserialize_fetch_result_from_type_field() {
+        let json = r##"{"type":"FetchResult","url":"https://example.com","markdown":"# Hi","status":"ok","spa_detected":false,"http_status":200}"##;
+        let resp: Response = serde_json::from_str(json).expect("parse FetchResult response");
+        match resp {
+            Response::FetchResult {
+                url,
+                markdown,
+                status,
+                spa_detected,
+                http_status,
+                ..
+            } => {
+                assert_eq!(url, "https://example.com");
+                assert_eq!(markdown, "# Hi");
+                assert_eq!(status, "ok");
+                assert!(!spa_detected);
+                assert_eq!(http_status, 200);
+            }
+            _ => panic!("expected FetchResult variant"),
+        }
     }
 
     /// ProviderHealth should serialize and deserialize correctly.

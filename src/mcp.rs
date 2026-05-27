@@ -26,7 +26,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 use crate::config::Config;
-use crate::daemon::protocol::{Request, Response, MAX_MESSAGE_SIZE};
+use crate::daemon::protocol::{Request, Response, MAX_FETCH_TIMEOUT_SECS, MAX_MESSAGE_SIZE};
 use crate::search::SearchRequest;
 
 // ---------------------------------------------------------------------------
@@ -62,6 +62,20 @@ fn default_limit() -> usize {
 }
 fn default_safe_search() -> bool {
     true
+}
+
+/// Parameters for the `fetch` tool.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct FetchParams {
+    /// The URL to fetch (required).
+    pub url: String,
+    /// Per-request timeout in seconds (default 15).
+    #[serde(default = "default_fetch_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+fn default_fetch_timeout_secs() -> u64 {
+    15
 }
 
 // ---------------------------------------------------------------------------
@@ -452,6 +466,81 @@ impl MetasearchServer {
             )),
         }
     }
+
+    /// Handle the `fetch` tool: fetch a URL and return page content as markdown.
+    async fn handle_fetch(
+        &self,
+        ctx: ToolCallContext<'_, MetasearchServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = ctx.arguments.unwrap_or_default();
+        let params: FetchParams =
+            serde_json::from_value(serde_json::Value::Object(args)).map_err(|e| {
+                ErrorData::invalid_params(format!("Invalid fetch parameters: {}", e), None)
+            })?;
+
+        if params.url.trim().is_empty() {
+            return Err(ErrorData::invalid_params("URL must not be empty", None));
+        }
+
+        if params.timeout_secs == 0 || params.timeout_secs > MAX_FETCH_TIMEOUT_SECS {
+            return Err(ErrorData::invalid_params(
+                format!(
+                    "timeout_secs must be between 1 and {} seconds",
+                    MAX_FETCH_TIMEOUT_SECS
+                ),
+                None,
+            ));
+        }
+
+        let response = self
+            .client
+            .send_request(&Request::Fetch {
+                url: params.url,
+                timeout_secs: params.timeout_secs,
+            })
+            .await?;
+
+        match response {
+            Response::FetchResult {
+                url,
+                markdown,
+                status,
+                spa_detected,
+                http_status,
+                error,
+            } => {
+                let sanitized_error = error.map(|e| sanitize_daemon_error(&e));
+                let result = serde_json::json!({
+                    "url": url,
+                    "markdown": markdown,
+                    "status": status,
+                    "spa_detected": spa_detected,
+                    "http_status": http_status,
+                    "error": sanitized_error,
+                });
+                let json = serde_json::to_string(&result).map_err(|e| {
+                    ErrorData::new(
+                        ErrorCode(-32000),
+                        format!("Failed to serialize fetch result: {}", e),
+                        None,
+                    )
+                })?;
+                Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+                    json,
+                )]))
+            }
+            Response::Error { code, message, .. } => Err(ErrorData::new(
+                ErrorCode(map_daemon_error(code)),
+                sanitize_daemon_error(&message),
+                None,
+            )),
+            other => Err(ErrorData::new(
+                ErrorCode(-32000),
+                format!("Unexpected daemon response type for fetch: {:?}", other),
+                None,
+            )),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -590,10 +679,42 @@ fn build_router(server: &Arc<MetasearchServer>) -> Router<MetasearchServer> {
         )
     };
 
+    let fetch_tool = Tool::new(
+        "fetch",
+        "Fetch a web page and return its content as markdown. Uses anti-blocking measures (TLS cipher rotation, User-Agent rotation) to avoid fingerprinting. For JavaScript-heavy pages, returns a warning that the content may be incomplete.",
+        to_json_object(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The URL to fetch"
+                },
+                "timeout_secs": {
+                    "type": "integer",
+                    "description": "Per-request timeout in seconds (default 15)",
+                    "default": 15
+                }
+            },
+            "required": ["url"]
+        })),
+    );
+
+    let fetch_handler = {
+        let s = Arc::clone(&s);
+        ToolRoute::new_dyn(
+            fetch_tool,
+            move |ctx: ToolCallContext<'_, MetasearchServer>| {
+                let s = Arc::clone(&s);
+                Box::pin(async move { s.handle_fetch(ctx).await })
+            },
+        )
+    };
+
     Router::new(s.as_ref().clone())
         .with_tool(search_handler)
         .with_tool(list_providers_handler)
         .with_tool(cache_stats_handler)
+        .with_tool(fetch_handler)
 }
 
 // Add Clone for MetasearchServer since Router needs to own it.
@@ -695,5 +816,41 @@ mod tests {
         assert_eq!(parsed.limit, original.limit);
         assert_eq!(parsed.freshness, original.freshness);
         assert_eq!(parsed.dispatch_mode, original.dispatch_mode);
+    }
+
+    /// FetchParams should deserialize from minimal JSON (url only).
+    #[test]
+    fn fetch_params_deserialize_minimal() {
+        let json = serde_json::json!({
+            "url": "https://example.com"
+        });
+        let params: FetchParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.url, "https://example.com");
+        assert_eq!(params.timeout_secs, 15); // default
+    }
+
+    /// FetchParams should deserialize from full JSON (url + timeout).
+    #[test]
+    fn fetch_params_deserialize_full() {
+        let json = serde_json::json!({
+            "url": "https://example.com",
+            "timeout_secs": 30
+        });
+        let params: FetchParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.url, "https://example.com");
+        assert_eq!(params.timeout_secs, 30);
+    }
+
+    /// FetchParams should round-trip through serialize/deserialize.
+    #[test]
+    fn fetch_params_roundtrip() {
+        let original = FetchParams {
+            url: "https://example.com".into(),
+            timeout_secs: 20,
+        };
+        let json = serde_json::to_value(&original).unwrap();
+        let parsed: FetchParams = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.url, original.url);
+        assert_eq!(parsed.timeout_secs, original.timeout_secs);
     }
 }

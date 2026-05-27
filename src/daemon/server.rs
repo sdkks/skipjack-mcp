@@ -19,13 +19,19 @@
 //! exceeds the size limit. After a Shutdown request the daemon signals
 //! shutdown externally; the connection itself just returns the ShutdownAck.
 
+use std::net::ToSocketAddrs;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 use super::manager::{HealthStatus, Manager};
-use super::protocol::{ProviderHealth, ProviderInfo, Request, Response, MAX_MESSAGE_SIZE};
+use super::protocol::{
+    ProviderHealth, ProviderInfo, Request, Response, MAX_FETCH_TIMEOUT_SECS, MAX_MESSAGE_SIZE,
+};
+use crate::anti_blocking::{build_shuffled_tls_config, UserAgentPool};
 use crate::config::Config;
+use ipnet::IpNet;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -180,6 +186,419 @@ enum ReadError {
     Io(std::io::Error),
 }
 
+/// Maximum size of a fetched HTML body, in bytes (5 MB).
+const MAX_FETCH_BODY_SIZE: usize = 5 * 1024 * 1024;
+
+/// Maximum number of HTTP redirects to follow.
+const MAX_REDIRECTS: usize = 5;
+
+/// SPA detection warning block appended to markdown when heuristics trigger.
+const SPA_WARNING: &str = "\n\n<!-- SKIPJACKD_SPA_DETECTED: This page appears to require JavaScript rendering. The\n     content above may be incomplete. Consider using a JS-capable fetch tool (e.g.,\n     Playwright MCP) to retrieve the full rendered content. -->\n";
+
+// ---------------------------------------------------------------------------
+// SSRF protection
+// ---------------------------------------------------------------------------
+
+/// Check if a hostname string is in the DNS blocklist.
+fn is_hostname_blocked(host: &str) -> bool {
+    let host_lower = host.to_lowercase();
+    host_lower == "localhost"
+        || host_lower.ends_with(".local")
+        || host_lower == "metadata.google.internal"
+}
+
+/// Check if an IP address falls within a private/loopback/link-local range.
+fn is_ip_blocked(ip: &std::net::IpAddr) -> bool {
+    let blocked: &[&str] = &[
+        "127.0.0.0/8",    // loopback
+        "10.0.0.0/8",     // RFC 1918 private
+        "172.16.0.0/12",  // RFC 1918 private
+        "192.168.0.0/16", // RFC 1918 private
+        "169.254.0.0/16", // link-local / cloud metadata
+        "::1/128",        // IPv6 loopback
+        "fc00::/7",       // IPv6 unique local
+        "fe80::/10",      // IPv6 link-local
+        "0.0.0.0/8",      // current network
+    ];
+
+    for range in blocked {
+        if let Ok(net) = range.parse::<IpNet>() {
+            if net.contains(ip) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Validate a URL for SSRF protection.
+///
+/// Checks:
+/// 1. URL is well-formed
+/// 2. Scheme is http or https only
+/// 3. Hostname is not in DNS blocklist (localhost, *.local, metadata.google.internal)
+/// 4. Resolved IP addresses are not in private/loopback/link-local ranges
+///
+/// Returns the parsed URL on success. Error messages are sanitized to avoid
+/// leaking internal network information.
+fn validate_url(url_str: &str) -> Result<url::Url, String> {
+    let parsed = url::Url::parse(url_str).map_err(|_| "Invalid URL".to_string())?;
+
+    // Check scheme.
+    let scheme = parsed.scheme();
+    if scheme != "http" && scheme != "https" {
+        return Err(format!("Unsupported URL scheme: {}", scheme));
+    }
+
+    // Validate host using the url::Host enum which distinguishes IPv4, IPv6, and domain.
+    match parsed.host() {
+        Some(url::Host::Ipv4(ip)) => {
+            if is_ip_blocked(&std::net::IpAddr::V4(ip)) {
+                return Err("URL resolves to a restricted network address".to_string());
+            }
+        }
+        Some(url::Host::Ipv6(ip)) => {
+            if is_ip_blocked(&std::net::IpAddr::V6(ip)) {
+                return Err("URL resolves to a restricted network address".to_string());
+            }
+        }
+        Some(url::Host::Domain(domain)) => {
+            if is_hostname_blocked(domain) {
+                return Err("URL resolves to a restricted network address".to_string());
+            }
+            // Resolve hostname to IP addresses and check all of them.
+            let port = parsed
+                .port()
+                .unwrap_or(if scheme == "https" { 443 } else { 80 });
+            let sock_addrs = (domain, port)
+                .to_socket_addrs()
+                .map_err(|_| "DNS resolution failed".to_string())?;
+            for addr in sock_addrs {
+                if is_ip_blocked(&addr.ip()) {
+                    return Err("URL resolves to a restricted network address".to_string());
+                }
+            }
+        }
+        None => return Err("URL has no host".to_string()),
+    }
+
+    Ok(parsed)
+}
+
+/// Fetch a URL and return its content as markdown.
+///
+/// Builds a standalone reqwest client with shuffled TLS ciphers and a random
+/// User-Agent, validates the URL for SSRF protection, GETs the URL with redirect
+/// following (each redirect validated), caps the body at
+/// [`MAX_FETCH_BODY_SIZE`], converts HTML to markdown, and runs SPA detection
+/// heuristics.
+async fn handle_fetch(url: &str, timeout_secs: u64) -> Response {
+    // Validate timeout.
+    if timeout_secs == 0 || timeout_secs > MAX_FETCH_TIMEOUT_SECS {
+        return Response::FetchResult {
+            url: url.to_string(),
+            markdown: String::new(),
+            status: "error".into(),
+            spa_detected: false,
+            http_status: 0,
+            error: Some(format!(
+                "Timeout must be between 1 and {} seconds",
+                MAX_FETCH_TIMEOUT_SECS
+            )),
+        };
+    }
+
+    // Validate URL for SSRF protection.
+    let _parsed_url = match validate_url(url) {
+        Ok(u) => u,
+        Err(e) => {
+            tracing::warn!(url = %url, error = %e, "URL validation failed");
+            return Response::FetchResult {
+                url: url.to_string(),
+                markdown: String::new(),
+                status: "error".into(),
+                spa_detected: false,
+                http_status: 0,
+                error: Some(e),
+            };
+        }
+    };
+
+    // Build HTTP client with anti-blocking TLS configuration.
+    let tls_config = match build_shuffled_tls_config() {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to build TLS config for fetch");
+            return Response::FetchResult {
+                url: url.to_string(),
+                markdown: String::new(),
+                status: "error".into(),
+                spa_detected: false,
+                http_status: 0,
+                error: Some(format!("TLS config error: {}", e)),
+            };
+        }
+    };
+
+    let ua = UserAgentPool::random_ua();
+
+    let client = match reqwest::Client::builder()
+        .use_preconfigured_tls(tls_config)
+        .user_agent(ua)
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            // Enforce redirect limit.
+            if attempt.previous().len() >= MAX_REDIRECTS {
+                return attempt.stop();
+            }
+            // Validate each redirect target for SSRF protection.
+            match validate_url(attempt.url().as_str()) {
+                Ok(_) => attempt.follow(),
+                Err(_) => attempt.stop(),
+            }
+        }))
+        .timeout(Duration::from_secs(timeout_secs))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to build HTTP client for fetch");
+            return Response::FetchResult {
+                url: url.to_string(),
+                markdown: String::new(),
+                status: "error".into(),
+                spa_detected: false,
+                http_status: 0,
+                error: Some(format!("Client build error: {}", e)),
+            };
+        }
+    };
+
+    // Execute the GET request.
+    let response = match client.get(url).send().await {
+        Ok(resp) => resp,
+        Err(e) => {
+            tracing::warn!(url = %url, error = %e, "fetch request failed");
+            let error_msg = if e.is_timeout() {
+                format!("Request timed out after {}s", timeout_secs)
+            } else if e.is_redirect() {
+                "Too many redirects".to_string()
+            } else {
+                format!("Request failed: {}", e)
+            };
+            return Response::FetchResult {
+                url: url.to_string(),
+                markdown: String::new(),
+                status: "error".into(),
+                spa_detected: false,
+                http_status: 0,
+                error: Some(error_msg),
+            };
+        }
+    };
+
+    let final_url = response.url().to_string();
+    let http_status = response.status().as_u16();
+
+    // Read body, capped at MAX_FETCH_BODY_SIZE.
+    let body_bytes = match read_body_capped(response, MAX_FETCH_BODY_SIZE).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            tracing::warn!(url = %url, error = %e, "failed to read fetch response body");
+            return Response::FetchResult {
+                url: final_url,
+                markdown: String::new(),
+                status: "error".into(),
+                spa_detected: false,
+                http_status,
+                error: Some(format!("Body read error: {}", e)),
+            };
+        }
+    };
+
+    let html = match std::str::from_utf8(&body_bytes) {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            return Response::FetchResult {
+                url: final_url,
+                markdown: String::new(),
+                status: "error".into(),
+                spa_detected: false,
+                http_status,
+                error: Some(format!("Invalid UTF-8: {}", e)),
+            };
+        }
+    };
+
+    // Detect SPA before HTML-to-markdown conversion.
+    let (is_spa, spa_md) = detect_spa(&html);
+
+    // Convert HTML to markdown.
+    let markdown = match html_to_markdown_rs::convert(&html, None) {
+        Ok(result) => result.content.unwrap_or_default(),
+        Err(e) => {
+            tracing::warn!(error = %e, "HTML to markdown conversion failed");
+            String::new()
+        }
+    };
+
+    // Append SPA warning if detected.
+    let final_markdown = if is_spa { markdown + &spa_md } else { markdown };
+
+    let status = if is_spa { "spa_detected" } else { "ok" };
+
+    tracing::info!(
+        url = %final_url,
+        http_status = http_status,
+        body_len = body_bytes.len(),
+        spa_detected = is_spa,
+        "fetch completed"
+    );
+
+    Response::FetchResult {
+        url: final_url,
+        markdown: final_markdown,
+        status: status.to_string(),
+        spa_detected: is_spa,
+        http_status,
+        error: None,
+    }
+}
+
+/// Read the response body incrementally, enforcing a byte cap.
+///
+/// Checks Content-Length header first (if present) and rejects oversized
+/// responses before reading. Then reads the body in chunks via
+/// `response.chunk()`, aborting as soon as the accumulated size exceeds
+/// `max_bytes`. This prevents buffering the entire body in memory before
+/// the cap check for chunked/streaming responses.
+async fn read_body_capped(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<bytes::Bytes, String> {
+    // Check Content-Length header proactively.
+    if let Some(cl) = response.content_length() {
+        if cl as usize > max_bytes {
+            return Err(format!(
+                "Response body ({cl} bytes) exceeds {} MB limit",
+                max_bytes / (1024 * 1024)
+            ));
+        }
+    }
+
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| format!("Failed to read response body: {e}"))?
+    {
+        body.extend_from_slice(&chunk);
+        if body.len() > max_bytes {
+            return Err(format!(
+                "Response body exceeds {} MB limit",
+                max_bytes / (1024 * 1024)
+            ));
+        }
+    }
+
+    Ok(bytes::Bytes::from(body))
+}
+
+/// Run SPA detection heuristics on the raw HTML.
+///
+/// Returns `(is_spa, warning_markdown)` where `warning_markdown` is the
+/// machine-readable warning block to append if SPA is detected.
+fn detect_spa(html: &str) -> (bool, String) {
+    // Strip script, style, and noscript content for body-text-length check.
+    let stripped = strip_tags(html, &["script", "style", "noscript"]);
+    let body_text_len = stripped.trim().len();
+
+    let mut flags: Vec<&str> = Vec::new();
+
+    // Heuristic 1: Body text < 512 bytes after stripping.
+    if body_text_len < 512 {
+        flags.push("body_text_too_short");
+    }
+
+    // Heuristic 2: No semantic content elements.
+    let stripped_lower = stripped.to_lowercase();
+    if !has_semantic_elements(&stripped_lower) {
+        flags.push("no_semantic_elements");
+    }
+
+    // Heuristic 3: Known SPA root elements.
+    if contains_spa_root(&html.to_lowercase()) {
+        flags.push("spa_root_element");
+    }
+
+    if flags.is_empty() {
+        return (false, String::new());
+    }
+
+    tracing::debug!(
+        flags = ?flags,
+        body_text_len = body_text_len,
+        "SPA detection triggered"
+    );
+
+    (true, SPA_WARNING.to_string())
+}
+
+/// Strip all content between opening and closing tags for the given tag names.
+///
+/// This is a simple string-based removal; it does not handle nested tags of the
+/// same name correctly, but that is acceptable for SPA heuristic purposes.
+fn strip_tags(html: &str, tags: &[&str]) -> String {
+    let mut result = html.to_string();
+    for tag in tags {
+        let open = format!("<{}", tag);
+        let close = format!("</{}>", tag);
+        loop {
+            let lower = result.to_lowercase();
+            let open_pos = match lower.find(&open) {
+                Some(p) => p,
+                None => break,
+            };
+            let close_pos = match lower[open_pos..].find(&close) {
+                Some(p) => open_pos + p + close.len(),
+                None => break,
+            };
+            result.replace_range(open_pos..close_pos, "");
+        }
+    }
+    result
+}
+
+/// Check if the stripped HTML contains any semantic content elements.
+fn has_semantic_elements(html_lower: &str) -> bool {
+    html_lower.contains("<p ")
+        || html_lower.contains("<p>")
+        || html_lower.contains("<h1")
+        || html_lower.contains("<h2")
+        || html_lower.contains("<h3")
+        || html_lower.contains("<h4")
+        || html_lower.contains("<h5")
+        || html_lower.contains("<h6")
+        || html_lower.contains("<article")
+        || html_lower.contains("<main")
+        || html_lower.contains("<section")
+}
+
+/// Check if the HTML contains known SPA root container elements.
+fn contains_spa_root(html_lower: &str) -> bool {
+    html_lower.contains(r#"<div id="root""#)
+        || html_lower.contains("<div id=\"root\"")
+        || html_lower.contains("<div id='root'")
+        || html_lower.contains(r#"<div id="app""#)
+        || html_lower.contains("<div id=\"app\"")
+        || html_lower.contains("<div id='app'")
+        || html_lower.contains(r#"<div id="__next""#)
+        || html_lower.contains("<div id=\"__next\"")
+        || html_lower.contains("<div id='__next'")
+        || html_lower.contains(r#"<div id="__nuxt""#)
+        || html_lower.contains("<div id=\"__nuxt\"")
+        || html_lower.contains("<div id='__nuxt'")
+}
+
 /// Dispatch a [`Request`] to the appropriate handler and produce a [`Response`].
 ///
 /// This function is the central routing point for all daemon requests.
@@ -250,6 +669,7 @@ async fn dispatch_request(request: Request, _config: &Config, manager: &Manager)
                 data: None,
             },
         },
+        Request::Fetch { url, timeout_secs } => handle_fetch(&url, timeout_secs).await,
         Request::Health => Response::Health {
             status: "ok".into(),
             uptime_secs: 0,
@@ -480,6 +900,268 @@ mod tests {
         let response: Response =
             serde_json::from_str(response_line.trim()).expect("parse response");
         assert!(matches!(response, Response::ShutdownAck));
+    }
+
+    /// SPA detection: combined flags (body short + no semantic + spa root).
+    #[test]
+    fn detect_spa_combined_flags() {
+        let html = "<html><body><div id=\"root\">Loading...</div></body></html>";
+        let (is_spa, warning) = detect_spa(html);
+        assert!(
+            is_spa,
+            "SPA with short body, spa root, and no semantics should be detected"
+        );
+        assert!(warning.contains("SKIPJACKD_SPA_DETECTED"));
+    }
+
+    /// SPA detection: normal HTML page with paragraphs should not be flagged.
+    #[test]
+    fn detect_spa_normal_page_not_flagged() {
+        let long_text = "x".repeat(1024);
+        let html = format!(
+            "<html><body><p>{}</p><section><h1>Title</h1><article>Content</article></section></body></html>",
+            long_text
+        );
+        let (is_spa, _) = detect_spa(&html);
+        assert!(
+            !is_spa,
+            "Normal page with semantic content should not be flagged as SPA"
+        );
+    }
+
+    /// SPA detection: body text too short after stripping.
+    #[test]
+    fn detect_spa_body_text_too_short() {
+        let html =
+            "<html><body><script>lots of noise here but stripped</script> short </body></html>";
+        let (is_spa, warning) = detect_spa(html);
+        assert!(is_spa);
+        // body_text_too_short is a debug-log flag, not in the user-facing warning.
+        assert!(warning.contains("SKIPJACKD_SPA_DETECTED"));
+    }
+
+    /// SPA detection: no semantic elements.
+    #[test]
+    fn detect_spa_no_semantic_elements() {
+        let long_text = "x".repeat(1024);
+        let html = format!("<html><body><div>{}</div></body></html>", long_text);
+        let (is_spa, _) = detect_spa(&html);
+        assert!(
+            is_spa,
+            "Page with no p/h/article/main/section tags should be flagged"
+        );
+    }
+
+    /// SPA detection: known SPA root elements trigger detection.
+    #[test]
+    fn detect_spa_root_elements() {
+        let roots = [
+            "<div id=\"root\">",
+            "<div id='app'>",
+            r#"<div id="__next">"#,
+            "<div id='__nuxt'>",
+        ];
+        let long_text = "x".repeat(1024);
+        for root in &roots {
+            let html = format!("<html><body>{}<p>{}</p></body></html>", root, long_text);
+            let (is_spa, _) = detect_spa(&html);
+            assert!(
+                is_spa,
+                "SPA root element '{}' should trigger detection",
+                root
+            );
+        }
+    }
+
+    /// strip_tags: removes script, style, and noscript content.
+    #[test]
+    fn strip_tags_removes_targeted_tags() {
+        let html = "<html><head><style>body { color: red; }</style></head><body><script>alert(1)</script><p>Hello</p><noscript>No JS</noscript></body></html>";
+        let result = strip_tags(html, &["script", "style", "noscript"]);
+        assert!(!result.contains("<script"));
+        assert!(!result.contains("alert(1)"));
+        assert!(!result.contains("<style"));
+        assert!(!result.contains("color: red"));
+        assert!(!result.contains("<noscript"));
+        assert!(!result.contains("No JS"));
+        assert!(result.contains("<p>Hello</p>"));
+    }
+
+    /// strip_tags: leaving targeted tags out leaves content intact.
+    #[test]
+    fn strip_tags_leaves_other_content_intact() {
+        let html = "<html><body><p>Para</p><div>Div</div></body></html>";
+        let result = strip_tags(html, &["script", "style"]);
+        assert!(result.contains("<p>Para</p>"));
+        assert!(result.contains("<div>Div</div>"));
+    }
+
+    // -----------------------------------------------------------------------
+    // validate_url tests
+    // -----------------------------------------------------------------------
+
+    /// Valid https URL should pass validation.
+    #[test]
+    fn validate_url_accepts_https() {
+        assert!(validate_url("https://example.com").is_ok());
+    }
+
+    /// Valid http URL should pass validation.
+    #[test]
+    fn validate_url_accepts_http() {
+        assert!(validate_url("http://example.com").is_ok());
+    }
+
+    /// file:// scheme should be rejected.
+    #[test]
+    fn validate_url_rejects_file_scheme() {
+        let result = validate_url("file:///etc/passwd");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unsupported URL scheme"));
+    }
+
+    /// ftp:// scheme should be rejected.
+    #[test]
+    fn validate_url_rejects_ftp_scheme() {
+        let result = validate_url("ftp://example.com");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unsupported URL scheme"));
+    }
+
+    /// localhost hostname should be rejected.
+    #[test]
+    fn validate_url_rejects_localhost() {
+        let result = validate_url("http://localhost:8080/admin");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "URL resolves to a restricted network address"
+        );
+    }
+
+    /// 127.0.0.1 loopback IP should be rejected.
+    #[test]
+    fn validate_url_rejects_loopback_ip() {
+        let result = validate_url("http://127.0.0.1:6379/");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "URL resolves to a restricted network address"
+        );
+    }
+
+    /// 127.x.x.x loopback range should be rejected.
+    #[test]
+    fn validate_url_rejects_loopback_range() {
+        let result = validate_url("http://127.99.0.1/");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "URL resolves to a restricted network address"
+        );
+    }
+
+    /// 192.168.x.x private IP should be rejected.
+    #[test]
+    fn validate_url_rejects_private_192_168() {
+        let result = validate_url("http://192.168.1.1/");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "URL resolves to a restricted network address"
+        );
+    }
+
+    /// 10.x.x.x private IP should be rejected.
+    #[test]
+    fn validate_url_rejects_private_10() {
+        let result = validate_url("http://10.0.0.1/admin");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "URL resolves to a restricted network address"
+        );
+    }
+
+    /// 172.16.x.x private IP should be rejected.
+    #[test]
+    fn validate_url_rejects_private_172_16() {
+        let result = validate_url("http://172.16.0.1/");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "URL resolves to a restricted network address"
+        );
+    }
+
+    /// 169.254.x.x link-local / cloud metadata IP should be rejected.
+    #[test]
+    fn validate_url_rejects_link_local() {
+        let result = validate_url("http://169.254.169.254/latest/meta-data/");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "URL resolves to a restricted network address"
+        );
+    }
+
+    /// 0.0.0.0/8 current network range should be rejected.
+    #[test]
+    fn validate_url_rejects_current_network() {
+        let result = validate_url("http://0.0.0.0:9200/");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "URL resolves to a restricted network address"
+        );
+    }
+
+    /// IPv6 loopback ::1 should be rejected.
+    #[test]
+    fn validate_url_rejects_ipv6_loopback() {
+        let result = validate_url("http://[::1]:8080/admin");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "URL resolves to a restricted network address"
+        );
+    }
+
+    /// IPv6 link-local fe80:: should be rejected.
+    #[test]
+    fn validate_url_rejects_ipv6_link_local() {
+        let result = validate_url("http://[fe80::1]:8080/");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "URL resolves to a restricted network address"
+        );
+    }
+
+    /// metadata.google.internal hostname should be rejected.
+    #[test]
+    fn validate_url_rejects_gcp_metadata_hostname() {
+        let result = validate_url("http://metadata.google.internal/computeMetadata/v1/");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "URL resolves to a restricted network address"
+        );
+    }
+
+    /// Malformed URL should return parse error.
+    #[test]
+    fn validate_url_rejects_malformed() {
+        let result = validate_url("not a url at all");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid URL"));
+    }
+
+    /// URL with no host (e.g., http:///) should be rejected.
+    #[test]
+    fn validate_url_rejects_no_host() {
+        let result = validate_url("http://");
+        assert!(result.is_err());
     }
 
     /// Sending a message over 1MB should return an Error with code -32600.

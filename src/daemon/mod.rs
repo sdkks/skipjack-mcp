@@ -680,6 +680,7 @@ mod tests {
         config.daemon.socket_dir = dir.path().to_string_lossy().to_string();
         config.daemon.pid_dir = dir.path().to_string_lossy().to_string();
         config.daemon.shutdown_grace_period_secs = 1;
+        config.cache.db_path = dir.path().join("cache.db").to_string_lossy().to_string();
         let config = config.freeze();
 
         let daemon = Daemon::start(config, None).await.expect("start daemon");

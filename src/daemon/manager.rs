@@ -77,6 +77,10 @@ pub struct HealthState {
     consecutive_failure_threshold: u32,
     /// Sliding window duration.
     window_duration: Duration,
+    /// When the provider transitioned to Unhealthy, if currently unhealthy.
+    unhealthy_since: Option<Instant>,
+    /// Cooldown before an unhealthy provider is auto-recovered.
+    recovery_cooldown: Duration,
 }
 
 impl HealthState {
@@ -84,13 +88,15 @@ impl HealthState {
     ///
     /// A newly created state is [`HealthStatus::Healthy`] and has an empty
     /// event window.
-    pub fn new(consecutive_failure_threshold: u32) -> Self {
+    pub fn new(consecutive_failure_threshold: u32, recovery_cooldown: Duration) -> Self {
         HealthState {
             events: VecDeque::new(),
             consecutive_failures: 0,
             status: HealthStatus::Healthy,
             consecutive_failure_threshold,
             window_duration: Duration::from_secs(300), // 5 minutes
+            unhealthy_since: None,
+            recovery_cooldown,
         }
     }
 
@@ -103,6 +109,7 @@ impl HealthState {
         self.events
             .push_back((Instant::now(), HealthEvent::Success));
         self.consecutive_failures = 0;
+        self.unhealthy_since = None;
 
         // Recover from degraded or unhealthy on success.
         if self.status != HealthStatus::Healthy {
@@ -123,6 +130,7 @@ impl HealthState {
 
         if self.consecutive_failures >= self.consecutive_failure_threshold {
             self.status = HealthStatus::Unhealthy;
+            self.unhealthy_since = Some(Instant::now());
             tracing::warn!(
                 consecutive_failures = self.consecutive_failures,
                 threshold = self.consecutive_failure_threshold,
@@ -144,6 +152,28 @@ impl HealthState {
     /// [`record_failure`](Self::record_failure).
     pub fn is_healthy(&self) -> bool {
         self.status == HealthStatus::Healthy
+    }
+
+    /// Check if the unhealthy cooldown has elapsed and auto-recover if so.
+    ///
+    /// Call this before filtering providers for dispatch. If the provider was
+    /// unhealthy but the cooldown has passed, it resets to Healthy so it gets
+    /// a chance to be retried on the next request.
+    pub fn check_recovery(&mut self) {
+        if self.status == HealthStatus::Unhealthy {
+            if let Some(since) = self.unhealthy_since {
+                if since.elapsed() >= self.recovery_cooldown {
+                    tracing::info!(
+                        cooldown_secs = self.recovery_cooldown.as_secs(),
+                        elapsed_secs = since.elapsed().as_secs(),
+                        "provider cooldown elapsed, resetting to Healthy for retry"
+                    );
+                    self.status = HealthStatus::Healthy;
+                    self.consecutive_failures = 0;
+                    self.unhealthy_since = None;
+                }
+            }
+        }
     }
 
     /// Return the current [`HealthStatus`].
@@ -337,6 +367,7 @@ impl Manager {
         let rate_limiter = Arc::new(RateLimiter::new());
         let retry_config = RetryConfig::from(&config.anti_blocking);
         let consecutive_failure_threshold = 3u32;
+        let recovery_cooldown = Duration::from_secs(config.search.unhealthy_recovery_cooldown_secs);
 
         let mut catalog = ProviderCatalog::new();
         let mut health_states = HashMap::new();
@@ -374,7 +405,7 @@ impl Manager {
 
             health_states.insert(
                 provider.name().to_string(),
-                HealthState::new(consecutive_failure_threshold),
+                HealthState::new(consecutive_failure_threshold, recovery_cooldown),
             );
             catalog.register(provider);
         }
@@ -532,7 +563,11 @@ impl Manager {
         };
 
         // Filter to healthy non-Playwright providers that are in the list.
-        let health_lock = self.health_states.read().await;
+        // Acquire write lock to check for cooldown-based recovery before filtering.
+        let mut health_lock = self.health_states.write().await;
+        for state in health_lock.values_mut() {
+            state.check_recovery();
+        }
         let providers_to_dispatch: Vec<String> = self
             .catalog
             .enabled_providers(Some(&provider_names), None)
@@ -729,7 +764,10 @@ impl Manager {
                 .collect()
         };
 
-        let health_lock = self.health_states.read().await;
+        let mut health_lock = self.health_states.write().await;
+        for state in health_lock.values_mut() {
+            state.check_recovery();
+        }
         let all_providers: Vec<String> = self
             .catalog
             .enabled_providers(Some(&provider_names), None)
@@ -1128,7 +1166,7 @@ mod tests {
 
     #[test]
     fn health_state_starts_healthy() {
-        let state = HealthState::new(3);
+        let state = HealthState::new(3, Duration::ZERO);
         assert!(state.is_healthy());
         assert_eq!(state.status(), HealthStatus::Healthy);
         assert!((state.health_score() - 1.0).abs() < f64::EPSILON);
@@ -1136,7 +1174,7 @@ mod tests {
 
     #[test]
     fn health_score_computes_success_rate() {
-        let mut state = HealthState::new(3);
+        let mut state = HealthState::new(3, Duration::ZERO);
 
         state.record_success();
         state.record_failure();
@@ -1149,7 +1187,7 @@ mod tests {
 
     #[test]
     fn health_score_drops_to_0_5_after_50_percent_failures() {
-        let mut state = HealthState::new(3);
+        let mut state = HealthState::new(3, Duration::ZERO);
 
         // 2 successes, 2 failures within the window
         for _ in 0..2 {
@@ -1168,7 +1206,7 @@ mod tests {
 
     #[test]
     fn consecutive_failures_marks_unhealthy() {
-        let mut state = HealthState::new(3);
+        let mut state = HealthState::new(3, Duration::ZERO);
 
         state.record_failure();
         state.record_failure();
@@ -1181,7 +1219,7 @@ mod tests {
 
     #[test]
     fn success_recovers_unhealthy_provider() {
-        let mut state = HealthState::new(3);
+        let mut state = HealthState::new(3, Duration::ZERO);
 
         // Make it unhealthy.
         for _ in 0..3 {
@@ -1198,7 +1236,7 @@ mod tests {
 
     #[test]
     fn health_score_below_0_5_marks_degraded() {
-        let mut state = HealthState::new(5);
+        let mut state = HealthState::new(5, Duration::ZERO);
 
         // 1 success, 3 failures = 25% success rate
         state.record_success();
@@ -1215,9 +1253,58 @@ mod tests {
 
     #[test]
     fn health_score_defaults_to_1_0_with_no_events() {
-        let state = HealthState::new(3);
+        let state = HealthState::new(3, Duration::ZERO);
         assert!((state.health_score() - 1.0).abs() < f64::EPSILON);
         assert!(state.is_healthy());
+    }
+
+    #[test]
+    fn check_recovery_resets_unhealthy_after_cooldown() {
+        let mut state = HealthState::new(3, Duration::ZERO);
+
+        // Make it unhealthy.
+        for _ in 0..3 {
+            state.record_failure();
+        }
+        assert_eq!(state.status(), HealthStatus::Unhealthy);
+
+        // Cooldown is zero, so recovery should happen immediately.
+        state.check_recovery();
+        assert_eq!(state.status(), HealthStatus::Healthy);
+        assert!(state.is_healthy());
+        assert_eq!(state.consecutive_failures(), 0);
+    }
+
+    #[test]
+    fn check_recovery_does_not_reset_before_cooldown() {
+        let mut state = HealthState::new(3, Duration::from_secs(3600));
+
+        // Make it unhealthy.
+        for _ in 0..3 {
+            state.record_failure();
+        }
+        assert_eq!(state.status(), HealthStatus::Unhealthy);
+
+        // Cooldown has not elapsed — should stay unhealthy.
+        state.check_recovery();
+        assert_eq!(state.status(), HealthStatus::Unhealthy);
+        assert!(!state.is_healthy());
+    }
+
+    #[test]
+    fn check_recovery_noop_on_degraded() {
+        let mut state = HealthState::new(5, Duration::ZERO);
+
+        // 1 success, 3 failures = 25% → Degraded (not Unhealthy).
+        state.record_success();
+        for _ in 0..3 {
+            state.record_failure();
+        }
+        assert_eq!(state.status(), HealthStatus::Degraded);
+
+        // check_recovery only recovers Unhealthy, not Degraded.
+        state.check_recovery();
+        assert_eq!(state.status(), HealthStatus::Degraded);
     }
 
     // -----------------------------------------------------------------------
@@ -1340,8 +1427,8 @@ mod tests {
         }));
 
         let mut health_states = HashMap::new();
-        health_states.insert("fast-a".into(), HealthState::new(3));
-        health_states.insert("fast-b".into(), HealthState::new(3));
+        health_states.insert("fast-a".into(), HealthState::new(3, Duration::ZERO));
+        health_states.insert("fast-b".into(), HealthState::new(3, Duration::ZERO));
 
         let manager = Manager {
             catalog: Arc::new(catalog),
@@ -1406,7 +1493,7 @@ mod tests {
         }));
 
         let mut health_states = HashMap::new();
-        health_states.insert("error-prv".into(), HealthState::new(3));
+        health_states.insert("error-prv".into(), HealthState::new(3, Duration::ZERO));
 
         let health_states = Arc::new(RwLock::new(health_states));
 
@@ -1490,7 +1577,7 @@ mod tests {
         }));
 
         let mut health_states = HashMap::new();
-        health_states.insert("concurrent-prv".into(), HealthState::new(3));
+        health_states.insert("concurrent-prv".into(), HealthState::new(3, Duration::ZERO));
 
         let manager = Arc::new(Manager {
             catalog: Arc::new(catalog),
@@ -1568,8 +1655,8 @@ mod tests {
         }));
 
         let mut health_states = HashMap::new();
-        health_states.insert("web-prv".into(), HealthState::new(3));
-        health_states.insert("playwright-prv".into(), HealthState::new(3));
+        health_states.insert("web-prv".into(), HealthState::new(3, Duration::ZERO));
+        health_states.insert("playwright-prv".into(), HealthState::new(3, Duration::ZERO));
 
         let manager = Manager {
             catalog: Arc::new(catalog),
@@ -1627,7 +1714,7 @@ mod tests {
         }));
 
         let mut health_states = HashMap::new();
-        health_states.insert("cached-prv".into(), HealthState::new(3));
+        health_states.insert("cached-prv".into(), HealthState::new(3, Duration::ZERO));
 
         let manager = Manager {
             catalog: Arc::new(catalog),
@@ -1687,8 +1774,8 @@ mod tests {
         }));
 
         let mut health_states = HashMap::new();
-        health_states.insert("tier-a".into(), HealthState::new(3));
-        health_states.insert("tier-b".into(), HealthState::new(3));
+        health_states.insert("tier-a".into(), HealthState::new(3, Duration::ZERO));
+        health_states.insert("tier-b".into(), HealthState::new(3, Duration::ZERO));
 
         let manager = Manager {
             catalog: Arc::new(catalog),

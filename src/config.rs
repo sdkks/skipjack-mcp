@@ -99,6 +99,10 @@ pub struct SearchConfig {
     pub max_limit: u32,
     /// Maximum time in seconds to wait for all providers.
     pub request_timeout_secs: u64,
+    /// Seconds before an unhealthy provider is automatically retried.
+    /// After this cooldown, the provider is reset to Healthy and will be
+    /// included in the next dispatch. Default 900 (15 minutes).
+    pub unhealthy_recovery_cooldown_secs: u64,
 }
 
 impl Default for SearchConfig {
@@ -107,6 +111,7 @@ impl Default for SearchConfig {
             default_limit: 10,
             max_limit: 100,
             request_timeout_secs: 60,
+            unhealthy_recovery_cooldown_secs: 900,
         }
     }
 }

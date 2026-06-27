@@ -85,6 +85,27 @@ fn default_cache_db_path() -> String {
         .to_string()
 }
 
+fn expand_tilde(path: &str) -> String {
+    if path == "~" {
+        return dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("~"))
+            .to_string_lossy()
+            .to_string();
+    }
+
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest).to_string_lossy().to_string();
+        }
+    }
+
+    path.to_string()
+}
+
+fn normalize_paths(config: &mut Config) {
+    config.cache.db_path = expand_tilde(&config.cache.db_path);
+}
+
 // ---------------------------------------------------------------------------
 // SearchConfig
 // ---------------------------------------------------------------------------
@@ -451,6 +472,7 @@ impl Config {
         };
 
         apply_env_overrides(&mut config)?;
+        normalize_paths(&mut config);
         validate_providers(&mut config);
 
         Ok(config)
@@ -734,6 +756,64 @@ enabled = true
         assert_eq!(frozen.daemon.name, "skipjackd");
         // Verify Arc reference count starts at 1
         assert_eq!(Arc::strong_count(&frozen), 1);
+    }
+
+    #[test]
+    fn cache_db_path_expands_tilde_from_config_load() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let config_path = temp_dir.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+[cache]
+db_path = "~/.cache/skipjackd/cache.db"
+"#,
+        )
+        .expect("write config");
+
+        let config =
+            Config::load(Some(config_path.to_str().expect("utf-8 path"))).expect("load config");
+
+        let expected = dirs::home_dir()
+            .expect("home dir")
+            .join(".cache")
+            .join("skipjackd")
+            .join("cache.db")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(config.cache.db_path, expected);
+    }
+
+    #[test]
+    fn cache_db_path_expands_tilde_from_env_override() {
+        std::env::set_var("SKIPJACKD_CACHE__DB_PATH", "~/.cache/skipjackd/cache.db");
+
+        let config = Config::load(Some("/definitely/nonexistent/skipjackd/config.toml"))
+            .expect("load config");
+
+        let expected = dirs::home_dir()
+            .expect("home dir")
+            .join(".cache")
+            .join("skipjackd")
+            .join("cache.db")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(config.cache.db_path, expected);
+
+        std::env::remove_var("SKIPJACKD_CACHE__DB_PATH");
+    }
+
+    #[test]
+    fn cache_db_path_preserves_absolute_and_relative_paths() {
+        let mut absolute = Config::default();
+        absolute.cache.db_path = "/tmp/skipjackd/cache.db".to_string();
+        normalize_paths(&mut absolute);
+        assert_eq!(absolute.cache.db_path, "/tmp/skipjackd/cache.db");
+
+        let mut relative = Config::default();
+        relative.cache.db_path = "relative/cache.db".to_string();
+        normalize_paths(&mut relative);
+        assert_eq!(relative.cache.db_path, "relative/cache.db");
     }
 
     /// Test that `SKIPJACKD_CACHE__DEFAULT_TTL_SECS=7200` env override works.
